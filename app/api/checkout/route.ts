@@ -1,0 +1,915 @@
+/**
+ * ===============================
+ * MAIN CHECKOUT API - PRODUCTION READY
+ * ===============================
+ * 
+ * Clean, reliable checkout system with:
+ * ✅ Database-first course lookup with static fallback
+ * ✅ Grant coupon system (100% off) 
+ * ✅ Affiliate tracking with commission calculation
+ * ✅ OpenEdX integration metadata
+ * ✅ Clean error handling
+ * ✅ No over-engineering
+ * 
+ * FLOW:
+ * 1. Validate request & get course data
+ * 2. Check for duplicate enrollment
+ * 3. If coupon -> Process free enrollment
+ * 4. If no coupon -> Process paid enrollment via Stripe
+ * 5. Record affiliate tracking for both paths
+ * 6. Return appropriate response
+ */
+
+import { NextRequest, NextResponse } from 'next/server'
+import { stripe } from '@/lib/stripe'
+import { getCourseFromDb } from '@/lib/services/course'
+import connectToDatabase from '@/lib/db'
+import { Course, Enrollment, Grant, Affiliate } from '@/lib/models'
+import { sendEmail } from '@/lib/emails'
+import { z } from 'zod'
+import ProductionLogger from '@/lib/utils/production-logger'
+
+// ===== REQUEST VALIDATION =====
+const checkoutSchema = z.object({
+    courseId: z.string().min(1, 'Course ID is required'),
+    email: z.string().email('Valid email is required').optional().or(z.literal('')), // Allow empty string or valid email
+    couponCode: z.string().optional(),
+    affiliateEmail: z.string().email().optional().or(z.literal('')), // Allow empty string
+    openedxUsername: z.string().optional(),
+    openedxEmail: z.string().email('Valid email is required').optional().or(z.literal('')), // Allow empty string or valid email
+    redirectSource: z.enum(['direct', 'lms_redirect', 'affiliate']).default('direct'),
+    requestId: z.string().optional() // Add requestId field
+});
+
+// ===== MAIN CHECKOUT HANDLER =====
+export async function POST(request: NextRequest) {
+    try {
+        // 1. Parse and validate request
+        const body = await request.json();
+        ProductionLogger.debug('Raw request body received', { hasBody: !!body });
+
+        // 2. Transform and clean data before validation
+        const cleanedBody = {
+            ...body,
+            email: body.email?.trim() || '',
+            couponCode: body.couponCode?.trim() || '',
+            affiliateEmail: body.affiliateEmail?.trim() || '',
+            openedxUsername: body.openedxUsername?.trim() || '',
+            openedxEmail: body.openedxEmail?.trim() || ''
+        };
+
+        ProductionLogger.debug('Cleaned request body', { cleanedKeys: Object.keys(cleanedBody) });
+
+        const validatedData = checkoutSchema.parse(cleanedBody);
+        const { courseId, email, couponCode, affiliateEmail, openedxUsername, openedxEmail, redirectSource, requestId } = validatedData;
+
+        // 3. Resolve final email with fallbacks
+        const finalEmail = (email && email.trim()) || (openedxEmail && openedxEmail.trim()) || `temp_${Date.now()}@placeholder.com`;
+
+        ProductionLogger.info('Processing checkout request', {
+            courseId,
+            hasEmail: !!finalEmail,
+            hasCoupon: !!couponCode,
+            hasAffiliate: !!affiliateEmail,
+            requestId
+        });
+
+        // 2. Get course data (database first, static fallback)
+        const course = await getCourseWithFallback(courseId);
+        if (!course) {
+            return NextResponse.json({
+                error: 'Course not found',
+                code: 'COURSE_NOT_FOUND',
+                retryable: false // Don't retry non-existent courses
+            }, { status: 404 });
+        }
+
+        // 3. Connect to database
+        await connectToDatabase();
+
+        // 4. Check for duplicate enrollment
+        const existingEnrollment = await Enrollment.findOne({
+            courseId: courseId,
+            email: finalEmail.toLowerCase(),
+            status: { $in: ['paid', 'pending'] }
+        });
+
+        if (existingEnrollment) {
+            return NextResponse.json({
+                error: 'Already enrolled in this course',
+                code: 'DUPLICATE_ENROLLMENT',
+                retryable: false, // Don't retry duplicate enrollments
+                enrollmentId: existingEnrollment._id
+            }, { status: 400 });
+        }
+
+        // 5. Validate affiliate if provided
+        let affiliate = null;
+        if (affiliateEmail && affiliateEmail !== '') {
+            // Prevent self-referral: user cannot use their own affiliate email
+            if (affiliateEmail.toLowerCase() === finalEmail.toLowerCase()) {
+                ProductionLogger.warn('Self-referral attempt blocked', {
+                    affiliateEmail,
+                    userEmail: finalEmail
+                });
+                return NextResponse.json({
+                    error: 'You cannot use your own email as an affiliate referral. If you are an affiliate, you can still enroll in courses - just leave the affiliate field empty.',
+                    code: 'SELF_REFERRAL_NOT_ALLOWED',
+                    retryable: false,
+                    suggestions: [
+                        'Leave the affiliate field empty to enroll normally',
+                        'Use a different email if this is for someone else',
+                        'Contact support if you need assistance'
+                    ]
+                }, { status: 400 });
+            }
+
+            affiliate = await Affiliate.findOne({
+                email: affiliateEmail.toLowerCase(),
+                status: 'active'
+            });
+            if (!affiliate) {
+                ProductionLogger.warn('Invalid affiliate email provided', {
+                    affiliateEmail
+                });
+                // Don't fail enrollment for invalid affiliate - just continue without tracking
+                ProductionLogger.info('Continuing enrollment without affiliate tracking');
+            } else {
+                ProductionLogger.info('Valid affiliate found', {
+                    affiliateName: affiliate.name,
+                    affiliateEmail: affiliate.email
+                });
+            }
+        }
+
+        // 6. Route to appropriate enrollment type
+        if (couponCode) {
+            // No affiliate tracking for free enrollments - affiliates only earn from paid courses
+            return await processCouponEnrollment({
+                courseId, email: finalEmail, couponCode, course,
+                openedxUsername, openedxEmail, redirectSource,
+                affiliateEmail // Pass affiliate email for tracking but no commission
+            });
+        } else {
+            // Affiliate tracking only for paid enrollments
+            return await processStripeCheckout({
+                courseId, email: finalEmail, course, affiliate,
+                openedxUsername, openedxEmail, redirectSource
+            });
+        }
+
+    } catch (error) {
+        ProductionLogger.error('Checkout error', {
+            error: error instanceof Error ? error.message : 'Unknown error',
+            stack: error instanceof Error ? error.stack : undefined
+        });
+
+        if (error instanceof z.ZodError) {
+            ProductionLogger.error('Validation details', {
+                errors: error.errors
+            });
+
+            // Create user-friendly error messages
+            const fieldErrors: Record<string, string> = {};
+            error.errors.forEach(err => {
+                const field = err.path.join('.');
+                if (field === 'email') {
+                    fieldErrors[field] = 'A valid email address is required';
+                } else if (field === 'affiliateEmail') {
+                    fieldErrors[field] = 'Please enter a valid affiliate email or leave empty';
+                } else if (field === 'courseId') {
+                    fieldErrors[field] = 'Course ID is required';
+                } else {
+                    fieldErrors[field] = err.message;
+                }
+            });
+
+            return NextResponse.json({
+                error: 'Please check the required fields and try again',
+                code: 'VALIDATION_ERROR',
+                retryable: false, // Don't retry validation errors
+                details: error.errors,
+                fieldErrors: fieldErrors,
+                userMessage: 'Please fill in all required fields correctly'
+            }, { status: 400 });
+        }
+
+        return NextResponse.json({
+            error: 'An error occurred processing your request',
+            code: 'CHECKOUT_ERROR',
+            userMessage: 'Something went wrong. Please try again or contact support.'
+        }, { status: 500 });
+    }
+}
+
+// ===== COURSE RETRIEVAL WITH FALLBACK =====
+async function getCourseWithFallback(courseId: string) {
+    try {
+        await connectToDatabase();
+
+        // Try database first
+        const dbCourse = await Course.findOne({
+            courseId: courseId,
+            isActive: true
+        });
+
+        if (dbCourse) {
+            ProductionLogger.info('Course found in database', { courseId });
+            return {
+                courseId: dbCourse.courseId,
+                title: dbCourse.title,
+                description: dbCourse.description,
+                price: dbCourse.price,
+                duration: dbCourse.duration,
+                level: dbCourse.level,
+                image: dbCourse.image,
+                features: dbCourse.features,
+                totalEnrollments: dbCourse.totalEnrollments || 0,
+                source: 'database'
+            };
+        }
+
+        // Fallback to static data
+        ProductionLogger.info('Course not in database, using static data');
+        const staticCourse = await getCourseFromDb(courseId);
+        if (staticCourse) {
+            return { ...staticCourse, source: 'static' };
+        }
+
+        return null;
+    } catch (error) {
+        ProductionLogger.error('Database error, using static fallback', {
+            error: error instanceof Error ? error.message : 'Unknown error'
+        });
+        return await getCourseFromDb(courseId);
+    }
+}
+
+// ===== FREE ENROLLMENT PROCESSING =====
+async function processCouponEnrollment(data: any) {
+    const { courseId, email, couponCode, course, affiliateEmail } = data;
+
+    ProductionLogger.info('Validating coupon', {
+        couponCode: couponCode.toUpperCase(),
+        email: email.toLowerCase(),
+        courseId
+    });
+
+    // 1. Atomically reserve grant coupon to prevent race conditions
+    const reservedGrant = await Grant.findOneAndUpdate(
+        {
+            couponCode: couponCode.toUpperCase(),
+            status: 'approved',
+            couponUsed: false,
+            email: email.toLowerCase()
+        },
+        {
+            $set: {
+                couponUsed: true,
+                couponUsedAt: new Date(),
+                couponUsedBy: email.toLowerCase(),
+                reservedAt: new Date()
+            }
+        },
+        {
+            new: true,
+            runValidators: true
+        }
+    );
+
+    ProductionLogger.info('Grant atomic reservation result', {
+        found: reservedGrant ? 'RESERVED' : 'NOT AVAILABLE'
+    });
+
+    if (reservedGrant) {
+        ProductionLogger.info('Grant successfully reserved', {
+            id: reservedGrant._id,
+            email: reservedGrant.email,
+            couponCode: reservedGrant.couponCode,
+            status: reservedGrant.status,
+            couponUsed: reservedGrant.couponUsed,
+            courseId: reservedGrant.courseId,
+            discountPercentage: reservedGrant.discountPercentage || 100,
+            requiresPayment: reservedGrant.requiresPayment || false
+        });
+    } else {
+        // Debug: Let's see what grants exist for this user
+        const userGrants = await Grant.find({ email: email.toLowerCase() });
+        ProductionLogger.info('No matching grant found, checking user grants', {
+            userGrantsCount: userGrants.length,
+            userGrants: userGrants.map(g => ({
+                id: g._id,
+                couponCode: g.couponCode,
+                status: g.status,
+                couponUsed: g.couponUsed,
+                email: g.email,
+                discountPercentage: g.discountPercentage || 100
+            }))
+        });
+
+        // Also check if coupon exists for any user
+        const anyCoupon = await Grant.findOne({ couponCode: couponCode.toUpperCase() });
+        ProductionLogger.info('Coupon exists for any user', {
+            exists: anyCoupon ? 'YES' : 'NO'
+        });
+        if (anyCoupon) {
+            ProductionLogger.info('Coupon details', {
+                email: anyCoupon.email,
+                status: anyCoupon.status,
+                couponUsed: anyCoupon.couponUsed,
+                discountPercentage: anyCoupon.discountPercentage || 100
+            });
+        }
+    }
+
+    if (!reservedGrant) {
+        return NextResponse.json({
+            error: 'Coupon is no longer available (already used or invalid)',
+            code: 'COUPON_UNAVAILABLE',
+            retryable: false,
+            debug: {
+                searchedFor: {
+                    couponCode: couponCode.toUpperCase(),
+                    email: email.toLowerCase(),
+                    status: 'approved',
+                    couponUsed: false
+                }
+            }
+        }, { status: 400 });
+    }
+
+    // 2. Check for coupon expiration (if somehow an expired coupon got reserved)
+    if (reservedGrant.couponMetadata?.expiresAt && new Date() > new Date(reservedGrant.couponMetadata.expiresAt)) {
+        // Rollback the reservation since coupon is expired
+        await Grant.findByIdAndUpdate(reservedGrant._id, {
+            $unset: {
+                couponUsed: 1,
+                couponUsedAt: 1,
+                couponUsedBy: 1,
+                reservedAt: 1
+            }
+        });
+
+        ProductionLogger.warn('Coupon expired after reservation, rolled back', {
+            couponCode: couponCode.toUpperCase(),
+            expiresAt: reservedGrant.couponMetadata.expiresAt,
+            currentTime: new Date()
+        });
+        return NextResponse.json({
+            error: 'This coupon has expired',
+            code: 'COUPON_EXPIRED',
+            retryable: false
+        }, { status: 400 });
+    }
+
+    // 3. Calculate discount amounts
+    const discountPercentage = reservedGrant.discountPercentage || 100;
+    const originalPrice = course.price;
+    const discountAmount = Math.round((originalPrice * discountPercentage) / 100 * 100) / 100;
+    const finalPrice = Math.round((originalPrice - discountAmount) * 100) / 100;
+    const requiresPayment = reservedGrant.requiresPayment || (discountPercentage < 100);
+
+    ProductionLogger.info('Discount calculation', {
+        originalPrice,
+        discountPercentage,
+        discountAmount,
+        finalPrice,
+        requiresPayment
+    });
+
+    // 4. Route to appropriate enrollment flow
+    if (requiresPayment && finalPrice > 0) {
+        // Partial discount - route to Stripe checkout with discounted price
+        return await processPartialDiscountCheckout({
+            ...data,
+            grant: reservedGrant,
+            originalPrice,
+            finalPrice,
+            discountPercentage,
+            discountAmount
+        });
+    }
+
+    // 5. Process free enrollment (100% discount)
+    const enrollment = new Enrollment({
+        courseId: courseId,
+        email: email.toLowerCase(),
+        paymentId: `free_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
+        amount: 0,
+        status: 'paid',
+        enrollmentType: 'free_grant',
+        timestamp: new Date().toISOString(),
+
+        // LMS integration data (Updated for FrappeLMS)
+        lmsContext: {
+            frappeUsername: data.openedxUsername,
+            frappeEmail: data.openedxEmail || email,
+            redirectSource: data.affiliateEmail ? 'affiliate' : data.redirectSource || 'direct',
+            // Keep legacy fields for backward compatibility
+            openedxUsername: data.openedxUsername,
+            openedxEmail: data.openedxEmail || email
+        },
+
+        // Grant data with enhanced discount tracking
+        grantData: {
+            grantId: reservedGrant._id,
+            couponCode: couponCode.toUpperCase(),
+            grantVerified: true,
+            discountPercentage: discountPercentage,
+            originalPrice: originalPrice,
+            finalPrice: finalPrice,
+            discountAmount: discountAmount
+        },
+
+        // Track referral source for free enrollments (no commission but track referral)
+        referralSource: data.affiliateEmail ? 'affiliate_link' : 'direct',
+        hasReferral: !!data.affiliateEmail,
+
+        // Payment method
+        paymentMethod: 'grant_coupon',
+
+        // Verification
+        verification: {
+            paymentVerified: true,
+            courseEligible: true,
+            grantVerified: true
+        },
+
+        // Metadata
+        metadata: {
+            source: 'checkout_api',
+            userAgent: 'web',
+            createdAt: new Date(),
+            discountType: 'full_grant'
+        }
+    });
+
+    // Save enrollment with rollback on failure
+    let savedEnrollment;
+    try {
+        savedEnrollment = await enrollment.save();
+        ProductionLogger.info('Free enrollment created', {
+            enrollmentId: savedEnrollment._id,
+            discountPercentage,
+            finalPrice
+        });
+    } catch (enrollmentError) {
+        // Rollback coupon reservation if enrollment creation fails
+        await Grant.findByIdAndUpdate(reservedGrant._id, {
+            $unset: {
+                couponUsed: 1,
+                couponUsedAt: 1,
+                couponUsedBy: 1,
+                reservedAt: 1
+            }
+        });
+
+        ProductionLogger.error('Enrollment creation failed, rolled back coupon reservation', {
+            error: enrollmentError instanceof Error ? enrollmentError.message : 'Unknown error',
+            grantId: reservedGrant._id
+        });
+
+        throw enrollmentError;
+    }
+
+    // 6. Link enrollment ID to the reserved grant (coupon already marked as used atomically)
+    await Grant.findByIdAndUpdate(reservedGrant._id, {
+        enrollmentId: savedEnrollment._id
+    });
+    ProductionLogger.info('Grant linked to enrollment');
+
+    // 6.5. ===== FRAPPE LMS INTEGRATION =====
+    // Enroll in FrappeLMS immediately for free enrollments
+    try {
+        ProductionLogger.info('Enrolling in FrappeLMS (free enrollment)');
+
+        const { enrollInFrappeLMS } = await import('@/lib/services/frappeLMS');
+
+        const frappeResult = await enrollInFrappeLMS({
+            user_email: email.toLowerCase(),
+            course_id: courseId,
+            paid_status: true, // Free enrollment is still "paid" (100% discount)
+            payment_id: savedEnrollment.paymentId,
+            amount: 0,
+            currency: 'USD',
+            referral_code: data.affiliateEmail || undefined
+        });
+
+        if (frappeResult.success) {
+            await Enrollment.findByIdAndUpdate(savedEnrollment._id, {
+                $set: {
+                    'frappeSync.synced': true,
+                    'frappeSync.syncStatus': 'success',
+                    'frappeSync.enrollmentId': frappeResult.enrollment_id,
+                    'frappeSync.syncCompletedAt': new Date(),
+                    'frappeSync.lastSyncAttempt': new Date()
+                }
+            });
+            ProductionLogger.info('FrappeLMS enrollment successful (free)', {
+                enrollmentId: frappeResult.enrollment_id
+            });
+        } else {
+            await Enrollment.findByIdAndUpdate(savedEnrollment._id, {
+                $set: {
+                    'frappeSync.synced': false,
+                    'frappeSync.syncStatus': 'failed',
+                    'frappeSync.errorMessage': frappeResult.error,
+                    'frappeSync.lastSyncAttempt': new Date(),
+                    'frappeSync.retryCount': 1
+                }
+            });
+            ProductionLogger.error('FrappeLMS enrollment failed (free)', {
+                error: frappeResult.error
+            });
+        }
+    } catch (frappeError) {
+        ProductionLogger.error('FrappeLMS error (free enrollment)', {
+            error: frappeError instanceof Error ? frappeError.message : 'Unknown error'
+        });
+        // Don't fail the free enrollment - user got access to frontend
+    }
+    // ===== END FRAPPE LMS INTEGRATION =====
+
+    // 7. Update course enrollment stats
+    if (course.source === 'database') {
+        await Course.findOneAndUpdate(
+            { courseId: courseId },
+            {
+                $inc: { totalEnrollments: 1 },
+                $push: {
+                    enrolledUsers: {
+                        email: email.toLowerCase(),
+                        enrolledAt: new Date(),
+                        paymentId: savedEnrollment.paymentId,
+                        amount: 0,
+                        discountPercentage: discountPercentage,
+                        grantType: 'free'
+                    }
+                }
+            }
+        );
+    }
+
+    ProductionLogger.info('Free enrollment completed', {
+        enrollmentId: savedEnrollment._id,
+        discountApplied: `${discountPercentage}%`
+    });
+
+    // 8. Send grant course enrollment confirmation email
+    try {
+        const customerName = email.split('@')[0];
+        const enrollmentDate = new Date().toLocaleDateString('en-US', {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric'
+        });
+
+        ProductionLogger.info('Sending grant course enrollment email', { email });
+
+        await sendEmail.grantCourseEnrollment(
+            email.toLowerCase(),
+            customerName,
+            course.title,
+            enrollmentDate,
+            originalPrice // Will update email template later to handle discount details
+        );
+
+        ProductionLogger.info('Grant course enrollment email sent successfully');
+    } catch (emailError) {
+        ProductionLogger.error('Failed to send grant course enrollment email', {
+            error: emailError instanceof Error ? emailError.message : 'Unknown error'
+        });
+    }
+
+    return NextResponse.json({
+        success: true,
+        directEnrollment: true,
+        enrollmentId: savedEnrollment._id.toString(),
+        course: {
+            title: course.title,
+            enrollmentType: 'free_grant'
+        },
+        redirectUrl: `/success?type=free&course=${encodeURIComponent(course.title)}&enrollmentId=${savedEnrollment._id}`
+    });
+}
+
+// ===== PAID ENROLLMENT PROCESSING =====
+async function processStripeCheckout(data: any) {
+    const { courseId, email, course, affiliate } = data;
+
+    // 1. Create pending enrollment record
+    const enrollment = new Enrollment({
+        courseId: courseId,
+        email: email.toLowerCase(),
+        paymentId: `PENDING_${Date.now()}`,
+        amount: course.price,
+        status: 'pending',
+        enrollmentType: 'paid_stripe',
+
+        // LMS integration data (Updated for FrappeLMS)
+        lmsContext: {
+            frappeUsername: data.openedxUsername,
+            frappeEmail: data.openedxEmail || email,
+            redirectSource: affiliate ? 'affiliate' : data.redirectSource || 'direct',
+            // Keep legacy fields for backward compatibility
+            openedxUsername: data.openedxUsername,
+            openedxEmail: data.openedxEmail || email
+        },
+
+        // Affiliate data (if applicable)
+        affiliateData: affiliate ? {
+            affiliateEmail: affiliate.email,
+            commissionEligible: true,
+            commissionRate: affiliate.commissionRate || 10,
+            commissionAmount: Math.round((course.price * (affiliate.commissionRate || 10)) / 100 * 100) / 100, // Calculate commission
+            referralSource: 'affiliate_link'
+        } : null,
+
+        // Set correct referral tracking for affiliate enrollments
+        referralSource: affiliate ? 'affiliate_link' : 'direct',
+        hasReferral: !!affiliate,
+
+        // Metadata
+        metadata: {
+            source: 'checkout_api',
+            userAgent: 'web',
+            createdAt: new Date()
+        }
+    });
+
+    const savedEnrollment = await enrollment.save();
+
+    // 2. Record affiliate activity immediately for tracking (even for pending payments)
+    if (affiliate) {
+        const commissionAmount = Math.round((course.price * (affiliate.commissionRate || 10)) / 100 * 100) / 100;
+        ProductionLogger.info('Recording affiliate activity', {
+            affiliateEmail: affiliate.email,
+            commissionAmount: commissionAmount
+        });
+        // Note: Affiliate stats will be updated by webhook when payment completes
+        // Just log the activity here for tracking pending enrollments
+    }
+
+    // 3. Create Stripe checkout session
+    const session = await stripe.checkout.sessions.create({
+        payment_method_types: ['card'],
+        line_items: [{
+            price_data: {
+                currency: 'usd',
+                product_data: {
+                    name: course.title,
+                    description: course.description,
+                    images: course.image ? [course.image] : undefined,
+                },
+                unit_amount: Math.round(course.price * 100), // Convert to cents
+            },
+            quantity: 1,
+        }],
+        mode: 'payment',
+        success_url: `${process.env.NEXT_PUBLIC_APP_URL}/success?session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url: `${process.env.NEXT_PUBLIC_APP_URL}/cancel?enrollment_id=${savedEnrollment._id}`,
+        customer_email: email,
+        metadata: {
+            courseId: courseId,
+            email: email,
+            enrollmentId: savedEnrollment._id.toString(),
+            affiliateEmail: affiliate?.email || '',
+            openedxUsername: data.openedxUsername || '',
+            openedxEmail: data.openedxEmail || '',
+            redirectSource: data.redirectSource
+        }
+    });
+
+    // 3. Update enrollment with Stripe session ID
+    await Enrollment.findByIdAndUpdate(savedEnrollment._id, {
+        stripeSessionId: session.id,
+        paymentId: `STRIPE_${session.id}`
+    });
+
+    ProductionLogger.info('Stripe session created', { sessionId: session.id });
+
+    return NextResponse.json({
+        checkoutUrl: session.url,
+        sessionId: session.id,
+        enrollmentId: savedEnrollment._id.toString(),
+        course: {
+            title: course.title,
+            price: course.price
+        }
+    });
+}
+
+// ===== AFFILIATE ACTIVITY TRACKING =====
+async function recordAffiliateActivity(affiliateEmail: string, action: string, enrollmentId: string, amount: number) {
+    try {
+        ProductionLogger.info('Recording affiliate activity', {
+            affiliateEmail,
+            action,
+            enrollmentId,
+            amount
+        });
+
+        // Update affiliate stats
+        const affiliate = await Affiliate.findOne({ email: affiliateEmail.toLowerCase() });
+        if (affiliate) {
+            ProductionLogger.info('Found affiliate, current stats', {
+                affiliateName: affiliate.name,
+                totalReferrals: affiliate.stats?.totalReferrals || 0,
+                pendingCommissions: affiliate.pendingCommissions || 0,
+                totalPaid: affiliate.totalPaid || 0
+            });
+
+            const updatedAffiliate = await affiliate.refreshStats(); // Uses existing method
+
+            ProductionLogger.info('Updated affiliate stats', {
+                affiliateEmail,
+                newTotalReferrals: updatedAffiliate?.stats?.totalReferrals || 0,
+                newPendingCommissions: updatedAffiliate?.pendingCommissions || 0,
+                newTotalPaid: updatedAffiliate?.totalPaid || 0
+            });
+        } else {
+            ProductionLogger.warn('Affiliate not found', { affiliateEmail });
+            // Let's see if affiliate exists with different casing
+            const anyAffiliate = await Affiliate.findOne({
+                email: { $regex: new RegExp(`^${affiliateEmail}$`, 'i') }
+            });
+            if (anyAffiliate) {
+                ProductionLogger.info('Found affiliate with different casing', {
+                    searchedEmail: affiliateEmail,
+                    actualEmail: anyAffiliate.email
+                });
+            } else {
+                ProductionLogger.warn('No affiliate found with any casing', { affiliateEmail });
+            }
+        }
+
+    } catch (error) {
+        ProductionLogger.error('Error recording affiliate activity', {
+            affiliateEmail,
+            error: error instanceof Error ? error.message : 'Unknown error',
+            stack: error instanceof Error ? error.stack : undefined
+        });
+    }
+}
+
+// ===== PARTIAL DISCOUNT CHECKOUT PROCESSING =====
+async function processPartialDiscountCheckout(data: any) {
+    const {
+        courseId, email, course, affiliateEmail, grant,
+        originalPrice, finalPrice, discountPercentage, discountAmount
+    } = data;
+
+    ProductionLogger.info('Processing partial discount checkout', {
+        originalPrice,
+        finalPrice,
+        discountPercentage,
+        grantId: grant._id
+    });
+
+    // 1. Find or create affiliate for commission tracking
+    let affiliate = null;
+    if (affiliateEmail && affiliateEmail !== '') {
+        affiliate = await Affiliate.findOne({
+            email: affiliateEmail.toLowerCase(),
+            status: 'active'
+        });
+        if (affiliate) {
+            ProductionLogger.info('Valid affiliate found for partial discount', {
+                affiliateName: affiliate.name,
+                affiliateEmail: affiliate.email
+            });
+        }
+    }
+
+    // 2. Create pending enrollment record for partial discount
+    const enrollment = new Enrollment({
+        courseId: courseId,
+        email: email.toLowerCase(),
+        paymentId: `PARTIAL_PENDING_${Date.now()}`,
+        amount: finalPrice, // Discounted amount to pay
+        status: 'pending',
+        enrollmentType: 'partial_grant',
+
+        // LMS integration data
+        lmsContext: {
+            openedxUsername: data.openedxUsername,
+            openedxEmail: data.openedxEmail || email,
+            redirectSource: affiliate ? 'affiliate' : data.redirectSource || 'direct'
+        },
+
+        // Enhanced grant data for partial discounts
+        grantData: {
+            grantId: grant._id,
+            couponCode: grant.couponCode,
+            grantVerified: true,
+            discountPercentage: discountPercentage,
+            originalPrice: originalPrice,
+            finalPrice: finalPrice,
+            discountAmount: discountAmount,
+            grantType: 'partial'
+        },
+
+        // Affiliate data (if applicable) - commission on final price
+        affiliateData: affiliate ? {
+            affiliateEmail: affiliate.email,
+            commissionEligible: true,
+            commissionRate: affiliate.commissionRate || 10,
+            commissionAmount: Math.round((finalPrice * (affiliate.commissionRate || 10)) / 100 * 100) / 100,
+            referralSource: 'affiliate_link',
+            originalAmount: originalPrice,
+            discountedAmount: finalPrice
+        } : null,
+
+        // Set referral tracking
+        referralSource: affiliate ? 'affiliate_link' : 'direct',
+        hasReferral: !!affiliate,
+
+        // Payment method
+        paymentMethod: 'partial_grant_stripe',
+
+        // Metadata
+        metadata: {
+            source: 'checkout_api',
+            userAgent: 'web',
+            createdAt: new Date(),
+            discountType: 'partial_grant'
+        }
+    });
+
+    const savedEnrollment = await enrollment.save();
+
+    // 3. Create Stripe checkout session with discounted price
+    const session = await stripe.checkout.sessions.create({
+        payment_method_types: ['card'],
+        line_items: [{
+            price_data: {
+                currency: 'usd',
+                product_data: {
+                    name: `${course.title} (${discountPercentage}% Grant Discount Applied)`,
+                    description: `Original Price: $${originalPrice} | Discount: ${discountPercentage}% ($${discountAmount}) | Final Price: $${finalPrice}`,
+                    images: course.image ? [course.image] : undefined,
+                },
+                unit_amount: Math.round(finalPrice * 100), // Convert to cents
+            },
+            quantity: 1,
+        }],
+        mode: 'payment',
+        success_url: `${process.env.NEXT_PUBLIC_APP_URL}/success?session_id={CHECKOUT_SESSION_ID}&grant_discount=${discountPercentage}`,
+        cancel_url: `${process.env.NEXT_PUBLIC_APP_URL}/cancel?enrollment_id=${savedEnrollment._id}`,
+        customer_email: email,
+        metadata: {
+            courseId: courseId,
+            email: email,
+            enrollmentId: savedEnrollment._id.toString(),
+            affiliateEmail: affiliate?.email || '',
+            openedxUsername: data.openedxUsername || '',
+            openedxEmail: data.openedxEmail || '',
+            redirectSource: data.redirectSource,
+            grantId: grant._id.toString(),
+            discountPercentage: discountPercentage.toString(),
+            originalPrice: originalPrice.toString(),
+            finalPrice: finalPrice.toString(),
+            enrollmentType: 'partial_grant'
+        }
+    });
+
+    // 4. Update enrollment with Stripe session ID
+    await Enrollment.findByIdAndUpdate(savedEnrollment._id, {
+        stripeSessionId: session.id,
+        paymentId: `STRIPE_PARTIAL_${session.id}`
+    });
+
+    ProductionLogger.info('Partial discount Stripe session created', {
+        sessionId: session.id,
+        originalPrice,
+        finalPrice,
+        discountPercentage
+    });
+
+    return NextResponse.json({
+        checkoutUrl: session.url,
+        sessionId: session.id,
+        enrollmentId: savedEnrollment._id.toString(),
+        course: {
+            title: course.title,
+            originalPrice: originalPrice,
+            finalPrice: finalPrice,
+            discountPercentage: discountPercentage,
+            discountAmount: discountAmount
+        },
+        grant: {
+            couponCode: grant.couponCode,
+            grantType: 'partial'
+        }
+    });
+}
+
+export async function GET() {
+    return NextResponse.json({
+        status: 'Simple Checkout API',
+        version: '1.0',
+        endpoints: {
+            POST: 'Process course enrollment (free coupon or paid Stripe)'
+        }
+    });
+}
