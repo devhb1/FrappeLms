@@ -433,7 +433,10 @@ export default function ProfilePage() {
                                             <span className="text-gray-600 dark:text-gray-400">Member Since:</span>
                                             <p className="mt-1">
                                                 {userProfile?.createdAt ?
-                                                    new Date(userProfile.createdAt).toLocaleDateString() :
+                                                    new Date(userProfile.createdAt).toLocaleDateString('en-US', {
+                                                        month: 'long',
+                                                        year: 'numeric'
+                                                    }) :
                                                     'N/A'
                                                 }
                                             </p>

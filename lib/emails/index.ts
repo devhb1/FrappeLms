@@ -2,7 +2,7 @@ import nodemailer, { Transporter } from 'nodemailer';
 import ejs from 'ejs';
 import path from 'path';
 
-// ===== SIMPLIFIED EMAIL SERVICE =====
+// ===== PRODUCTION-READY EMAIL SERVICE =====
 
 interface EmailData {
     [key: string]: any;
@@ -32,7 +32,9 @@ class SimpleEmailService {
             await this.transporter.verify();
             console.log('✅ Email service ready');
         } catch (error) {
-            console.error('❌ Email service failed:', error);
+            console.error('❌ SMTP CONNECTION FAILED:', error);
+            console.error('⚠️ Please check your SMTP credentials in .env.local');
+            throw new Error('Email service initialization failed');
         }
     }
 
@@ -49,7 +51,7 @@ class SimpleEmailService {
             const html = await ejs.renderFile(templatePath, data);
 
             // Send email
-            const result = await this.transporter.sendMail({
+            await this.transporter.sendMail({
                 from: `${process.env.EMAIL_FROM || 'MaalEdu'} <${process.env.SMTP_MAIL}>`,
                 to,
                 subject,
@@ -60,7 +62,14 @@ class SimpleEmailService {
             return true;
         } catch (error) {
             console.error(`❌ Email failed: ${templateName} to ${to}`, error);
-            return false;
+
+            // Log specific error guidance
+            const errMsg = (error as any)?.response || (error as any)?.message || '';
+            if ((errMsg as string).includes('Maximum credits exceeded')) {
+                console.error('❌ SENDGRID QUOTA EXCEEDED - Check your SendGrid account at https://app.sendgrid.com/');
+            }
+
+            throw error;
         }
     }
 
