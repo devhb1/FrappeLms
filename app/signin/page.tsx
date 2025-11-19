@@ -68,13 +68,8 @@ function SignInForm() {
             const result = await signIn('credentials', {
                 email: email.toLowerCase().trim(),
                 password,
-                redirect: true,
-                callbackUrl: '/dashboard'
+                redirect: false
             });
-
-            // If redirect: true is used, this code won't execute on success
-            // NextAuth will automatically redirect to callbackUrl
-            // This only executes if there's an error
 
             if (result?.error) {
                 // Handle specific error types
@@ -90,6 +85,12 @@ function SignInForm() {
                 }
                 setIsLoading(false);
                 return;
+            }
+
+            if (result?.ok) {
+                // Use window.location.href for hard navigation to ensure session is properly established
+                // This forces a full page reload which ensures middleware picks up the new session
+                window.location.href = '/dashboard';
             }
         } catch (error) {
             console.error('SignIn error:', error);
