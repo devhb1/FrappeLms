@@ -156,14 +156,14 @@ export async function POST(request: NextRequest) {
             // No affiliate tracking for free enrollments - affiliates only earn from paid courses
             return await processCouponEnrollment({
                 courseId, email: finalEmail, couponCode, course,
-                openedxUsername, openedxEmail, redirectSource,
+                redirectSource,
                 affiliateEmail // Pass affiliate email for tracking but no commission
             });
         } else {
             // Affiliate tracking only for paid enrollments
             return await processStripeCheckout({
                 courseId, email: finalEmail, course, affiliate,
-                openedxUsername, openedxEmail, redirectSource
+                redirectSource
             });
         }
 
