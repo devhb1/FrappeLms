@@ -54,7 +54,10 @@ export interface CourseStats {
     draft: number;
     published: number;
     archived: number;
+    active: number;
+    inactive: number;
     totalEnrollments: number;
+    totalRevenue?: number;
 }
 
 // Public course data (for course listing page)
