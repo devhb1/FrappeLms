@@ -7,7 +7,7 @@
  * ✅ Database-first course lookup with static fallback
  * ✅ Grant coupon system (100% off) 
  * ✅ Affiliate tracking with commission calculation
- * ✅ OpenEdX integration metadata
+ * ✅ Frappe LMS integration metadata
  * ✅ Clean error handling
  * ✅ No over-engineering
  * 
@@ -63,7 +63,7 @@ export async function POST(request: NextRequest) {
             email: body.email?.trim() || '',
             couponCode: body.couponCode?.trim() || '',
             affiliateEmail: body.affiliateEmail?.trim() || '',
-            username: body.username?.trim() || body.openedxUsername?.trim() || '', // Support legacy field
+            username: body.username?.trim() || '', // Frappe LMS username
             requestId: body.requestId?.trim() || ''
         };
 
@@ -752,8 +752,6 @@ async function processStripeCheckout(data: any) {
             email: email,
             enrollmentId: savedEnrollment._id.toString(),
             affiliateEmail: affiliate?.email || '',
-            openedxUsername: data.openedxUsername || '',
-            openedxEmail: data.openedxEmail || '',
             redirectSource: data.redirectSource
         }
     });
@@ -942,8 +940,6 @@ async function processPartialDiscountCheckout(data: any) {
             email: email,
             enrollmentId: savedEnrollment._id.toString(),
             affiliateEmail: affiliate?.email || '',
-            openedxUsername: data.openedxUsername || '',
-            openedxEmail: data.openedxEmail || '',
             redirectSource: data.redirectSource,
             grantId: grant._id.toString(),
             discountPercentage: discountPercentage.toString(),

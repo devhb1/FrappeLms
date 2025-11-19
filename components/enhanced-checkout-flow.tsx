@@ -95,8 +95,6 @@ export default function EnhancedCheckoutFlow({
                 email: email?.toLowerCase() || undefined,
                 couponCode: couponCode?.toUpperCase() || undefined,
                 affiliateEmail: affiliateEmail?.toLowerCase() || undefined,
-                openedxUsername: undefined, // Not used in enhanced flow
-                openedxEmail: undefined,
                 redirectSource: 'direct',
                 requestId: currentRequestId
             }

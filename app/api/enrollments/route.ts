@@ -15,7 +15,7 @@ export async function GET(request: NextRequest) {
         const limit = parseInt(searchParams.get('limit') || '10')
         const enrollmentType = searchParams.get('enrollmentType')
 
-        // Build query for flexible filtering (for OpenEdX LMS consumption)
+        // Build query for flexible filtering (for Frappe LMS consumption)
         const query: any = {}
         if (email) query.email = email.toLowerCase()
         if (courseId) query.courseId = courseId
@@ -32,7 +32,7 @@ export async function GET(request: NextRequest) {
 
         console.log(`Found ${enrollments.length} enrollments for query:`, query)
 
-        // Format response for OpenEdX LMS consumption
+        // Format response for Frappe LMS consumption
         const formattedEnrollments = enrollments.map(enrollment => ({
             // Core enrollment data
             id: enrollment._id,
@@ -47,14 +47,14 @@ export async function GET(request: NextRequest) {
             // Enhanced enrollment context
             enrollmentType: enrollment.enrollmentType || 'paid_stripe',
 
-            // LMS context for OpenEdX decision making
+            // LMS context for Frappe LMS decision making
             lmsContext: enrollment.lmsContext || {
-                openedxUsername: enrollment.email?.split('@')[0],
-                openedxEmail: enrollment.email,
+                frappeUsername: enrollment.email?.split('@')[0],
+                frappeEmail: enrollment.email,
                 redirectSource: 'direct'
             },
 
-            // Affiliate data (for frontend analytics, not OpenEdX)
+            // Affiliate data (for frontend analytics, not Frappe LMS)
             affiliateData: enrollment.affiliateData ? {
                 affiliateEmail: enrollment.affiliateData.affiliateEmail,
                 referralSource: enrollment.affiliateData.referralSource,
@@ -70,7 +70,7 @@ export async function GET(request: NextRequest) {
                 grantVerified: enrollment.grantData.grantVerified
             } : null,
 
-            // Verification data for OpenEdX access decisions
+            // Verification data for Frappe LMS access decisions
             verification: {
                 paymentVerified: enrollment.verification?.paymentVerified ?? (enrollment.status === 'paid'),
                 courseEligible: enrollment.verification?.courseEligible ?? true,
@@ -79,14 +79,8 @@ export async function GET(request: NextRequest) {
                     (enrollment.paymentId?.startsWith('pi_') ? enrollment.paymentId : null),
                 grantVerified: enrollment.verification?.grantVerified ?? (!!enrollment.grantData?.grantVerified),
 
-                // Overall recommendation for OpenEdX
+                // Overall recommendation for Frappe LMS
                 recommendation: getAccessRecommendation(enrollment)
-            },
-
-            // OpenEdX sync status
-            openedxSync: enrollment.openedxSync || {
-                status: 'pending',
-                attempts: 0
             },
 
             // Enhanced affiliate data structure
@@ -120,7 +114,7 @@ export async function GET(request: NextRequest) {
 }
 
 /**
- * Generate access recommendation for OpenEdX LMS
+ * Generate access recommendation for Frappe LMS
  */
 function getAccessRecommendation(enrollment: any): 'grant_access' | 'manual_review' | 'deny_access' {
     // Paid enrollments with verified payment

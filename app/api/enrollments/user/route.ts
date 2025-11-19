@@ -35,7 +35,7 @@ export async function GET(request: NextRequest) {
                 enrollmentType: e.enrollmentType,
                 couponCode: e.couponCode || null,
                 enrolledAt: e.createdAt,
-                lmsUsername: e.lmsContext?.openedxUsername || null,
+                lmsUsername: e.lmsContext?.frappeUsername || null,
                 accessLevel: e.verification?.accessLevel || 'verified'
             }))
         });

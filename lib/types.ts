@@ -21,7 +21,7 @@ export interface CourseEnrollment {
     referralSource?: string  // Source of referral (e.g., "affiliate_link", "direct", "social")
     hasReferral?: boolean   // Quick flag to identify referral enrollments
 
-    // Enhanced fields for OpenEdX LMS integration
+    // Enhanced fields for Frappe LMS integration
     enrollmentType?: 'paid_stripe' | 'free_grant' | 'partial_grant' | 'affiliate_referral' | 'lms_redirect'
 
     // LMS integration data (FrappeLMS)
@@ -68,7 +68,7 @@ export interface CourseEnrollment {
         stripePaymentId?: string
         grantVerified?: boolean
         emailVerified?: boolean
-        frappeSynced?: boolean       // Updated from openedxSynced
+        frappeSynced?: boolean
         verificationAttempts?: number
     }
 
@@ -82,17 +82,6 @@ export interface CourseEnrollment {
         retryCount?: number
         syncCompletedAt?: Date
         retryJobId?: string  // Reference to RetryJob for active retry attempts
-    }
-
-    // Legacy OpenEdX integration status (for backward compatibility)
-    openedxSync?: {
-        synced?: boolean
-        lastSyncAttempt?: Date
-        syncStatus?: 'pending' | 'success' | 'failed' | 'retrying'
-        enrollmentId?: string
-        errorMessage?: string
-        retryCount?: number
-        syncCompletedAt?: Date
     }
 
     // Payment and transaction metadata
@@ -122,13 +111,12 @@ export interface CourseEnrollment {
 
 export interface CheckoutRequest {
     courseId: string
-    email?: string  // Made optional - can be derived from OpenedX email
+    email?: string
     couponCode?: string
 
     // Enhanced fields for LMS redirect and affiliate tracking
     affiliateEmail?: string
-    openedxUsername?: string  // Now required in practice
-    openedxEmail?: string
+    username?: string  // Frappe LMS username
     redirectSource?: 'lms_redirect' | 'direct' | 'affiliate'
 
     // Request deduplication

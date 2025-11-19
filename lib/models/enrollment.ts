@@ -21,7 +21,7 @@
  * 
  * DATA ARCHITECTURE:
  * - Core fields: Basic enrollment information
- * - LMS Context: OpenEdX and external platform integration
+ * - LMS Context: Frappe LMS and external platform integration
  * - Affiliate Data: Commission and referral tracking
  * - Grant Data: Free access coupon information
  * - Verification: Access control and validation status
@@ -114,7 +114,7 @@ const enrollmentSchema = new mongoose.Schema<IEnrollment>({
         default: false
     },
 
-    // ===== ENHANCED FIELDS FOR OPENEDX LMS INTEGRATION =====
+    // ===== ENHANCED FIELDS FOR FRAPPE LMS INTEGRATION =====
 
     // Enrollment type and context
     enrollmentType: {
@@ -192,7 +192,7 @@ const enrollmentSchema = new mongoose.Schema<IEnrollment>({
         }
     },
 
-    // Verification data for OpenEdX access decisions
+    // Verification data for Frappe LMS access decisions
     verification: {
         paymentVerified: {
             type: Boolean,

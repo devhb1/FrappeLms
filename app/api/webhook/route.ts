@@ -50,7 +50,7 @@ export async function GET() {
                 affiliateData: 1,
                 grantData: 1,
                 verification: 1,
-                openedxSync: 1,
+                frappeSync: 1,
                 paymentMethod: 1,
                 currency: 1,
                 originalAmount: 1,
@@ -198,7 +198,7 @@ export async function POST(req: NextRequest) {
                         paymentId: session.payment_intent as string,
                         status: 'paid',
                         'verification.paymentVerified': true,
-                        'frappeSync.syncStatus': 'pending',  // Updated from openedxSync
+                        'frappeSync.syncStatus': 'pending',
                         updatedAt: new Date()
                     },
                     $push: {

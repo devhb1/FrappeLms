@@ -316,7 +316,7 @@ courseSchema.virtual('paidEnrollments', {
     },
     options: {
         sort: { createdAt: -1 },
-        select: 'email lmsContext.openedxUsername affiliateData.affiliateEmail createdAt'
+        select: 'email lmsContext.frappeUsername affiliateData.affiliateEmail createdAt'
     }
 });
 
@@ -331,7 +331,7 @@ courseSchema.virtual('grantEnrollments', {
     },
     options: {
         sort: { createdAt: -1 },
-        select: 'email grantData lmsContext.openedxUsername createdAt'
+        select: 'email grantData lmsContext.frappeUsername createdAt'
     }
 });
 
@@ -365,7 +365,7 @@ courseSchema.pre(/^find/, function (this: any) {
     if (this.getOptions().populateEnrollments) {
         this.populate({
             path: 'paidEnrollments',
-            select: 'email paymentId lmsContext.openedxUsername affiliateData.affiliateEmail createdAt',
+            select: 'email paymentId lmsContext.frappeUsername affiliateData.affiliateEmail createdAt',
             options: { limit: 50 }  // Limit to recent enrollments
         });
     }

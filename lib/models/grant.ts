@@ -42,7 +42,7 @@ export interface IGrant extends Document {
     // ===== APPLICANT INFORMATION =====
     name: string;                               // Full name of grant applicant
     email: string;                              // Email address (used for coupon delivery and validation)
-    username: string;                           // OpenedX username for enrollment
+    username: string;                           // Frappe LMS username for enrollment
     age: number;                                // Age verification for eligibility
     socialAccounts: string;                     // Social media presence for verification
     reason: string;                             // Justification for grant request
