@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useSession } from 'next-auth/react';
-import { toast } from 'sonner';
+import { toast, Toaster } from 'sonner';
 import type { Course, CourseStats, CourseFormData } from '@/lib/types/course';
 
 export default function CourseManagementPage() {
@@ -232,6 +232,121 @@ export default function CourseManagementPage() {
         }));
     };
 
+    // ===== COURSE STATUS MANAGEMENT FUNCTIONS =====
+
+    /**
+     * Toggle course active/inactive status
+     * Active courses appear on /courses page, inactive ones don't
+     */
+    const handleToggleActive = async (course: Course) => {
+        const newStatus = !course.isActive;
+        const action = newStatus ? 'activate' : 'deactivate';
+
+        if (!confirm(`Are you sure you want to ${action} "${course.title}"?\n\n${newStatus ? 'This will make the course visible on /courses page.' : 'This will hide the course from /courses page (but preserve all data).'}`)) {
+            return;
+        }
+
+        try {
+            const response = await fetch(`/api/admin/courses/${encodeURIComponent(course.courseId)}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    isActive: newStatus,
+                    status: newStatus ? 'published' : course.status
+                })
+            });
+
+            const result = await response.json();
+
+            if (result.success) {
+                toast.success(`Course ${action}d successfully!`);
+                await fetchCourses();
+            } else {
+                toast.error(`Failed to ${action} course`);
+            }
+        } catch (error) {
+            toast.error(`Error ${action}ing course`);
+        }
+    };
+
+    /**
+     * Change course status (draft/published/archived)
+     */
+    const handleChangeStatus = async (course: Course, newStatus: 'draft' | 'published' | 'archived') => {
+        if (course.status === newStatus) return;
+
+        const statusMessages = {
+            draft: 'This will mark the course as draft (hidden from public).',
+            published: 'This will publish the course and make it visible on /courses page.',
+            archived: 'This will archive the course. Archived courses are hidden but all enrollment data is preserved.'
+        };
+
+        if (!confirm(`Change "${course.title}" to ${newStatus}?\n\n${statusMessages[newStatus]}`)) {
+            return;
+        }
+
+        try {
+            const response = await fetch(`/api/admin/courses/${encodeURIComponent(course.courseId)}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    status: newStatus,
+                    isActive: newStatus === 'published'  // Auto-activate if publishing
+                })
+            });
+
+            const result = await response.json();
+
+            if (result.success) {
+                toast.success(`Course status changed to ${newStatus}!`);
+                await fetchCourses();
+            } else {
+                toast.error(`Failed to change status: ${result.details}`);
+            }
+        } catch (error) {
+            toast.error('Error changing course status');
+        }
+    };
+
+    /**
+     * Permanently archive a course (soft delete)
+     */
+    const handleArchiveCourse = async (course: Course) => {
+        const hasEnrollments = (course.totalEnrollments || 0) > 0;
+        const warningMessage = hasEnrollments
+            ? `⚠️ WARNING: This course has ${course.totalEnrollments} enrollments!\n\nArchiving will:\n✓ Hide from public /courses page\n✓ Preserve all enrollment records\n✓ Keep all user data intact\n\nStudents can still access via LMS.\n\nContinue?`
+            : `Archive "${course.title}"?\n\nThis will hide it from /courses but preserve all data.`;
+
+        if (!confirm(warningMessage)) {
+            return;
+        }
+
+        try {
+            const response = await fetch(`/api/admin/courses/${encodeURIComponent(course.courseId)}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    status: 'archived',
+                    isActive: false
+                })
+            });
+
+            const result = await response.json();
+
+            if (result.success) {
+                toast.success(hasEnrollments
+                    ? `Course archived (${course.totalEnrollments} enrollments preserved)`
+                    : 'Course archived successfully'
+                );
+                await fetchCourses();
+            } else {
+                toast.error('Failed to archive course');
+            }
+        } catch (error) {
+            toast.error('Error archiving course');
+        }
+    };
+
     if (session?.user?.role !== 'admin') {
         return (
             <div className="min-h-screen bg-gray-50 flex items-center justify-center">
@@ -256,6 +371,7 @@ export default function CourseManagementPage() {
 
     return (
         <div className="min-h-screen bg-gray-50 py-8">
+            <Toaster position="top-right" richColors />
             <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                 {/* Header */}
                 <div className="mb-8">
@@ -265,7 +381,7 @@ export default function CourseManagementPage() {
 
                 {/* Statistics Cards */}
                 {stats && (
-                    <div className="grid grid-cols-1 md:grid-cols-5 gap-6 mb-8">
+                    <div className="grid grid-cols-1 md:grid-cols-6 gap-6 mb-8">
                         <div className="bg-white p-6 rounded-lg shadow">
                             <h3 className="text-sm font-medium text-gray-500">Total Courses</h3>
                             <p className="text-3xl font-bold text-gray-900">{stats.total}</p>
@@ -273,6 +389,11 @@ export default function CourseManagementPage() {
                         <div className="bg-white p-6 rounded-lg shadow">
                             <h3 className="text-sm font-medium text-gray-500">Published</h3>
                             <p className="text-3xl font-bold text-green-600">{stats.published}</p>
+                        </div>
+                        <div className="bg-white p-6 rounded-lg shadow">
+                            <h3 className="text-sm font-medium text-gray-500">Active</h3>
+                            <p className="text-3xl font-bold text-blue-600">{stats.active || 0}</p>
+                            <p className="text-xs text-gray-500 mt-1">Visible on /courses</p>
                         </div>
                         <div className="bg-white p-6 rounded-lg shadow">
                             <h3 className="text-sm font-medium text-gray-500">Drafts</h3>
@@ -284,7 +405,7 @@ export default function CourseManagementPage() {
                         </div>
                         <div className="bg-white p-6 rounded-lg shadow">
                             <h3 className="text-sm font-medium text-gray-500">Total Enrollments</h3>
-                            <p className="text-3xl font-bold text-blue-600">{stats.totalEnrollments}</p>
+                            <p className="text-3xl font-bold text-purple-600">{stats.totalEnrollments}</p>
                         </div>
                     </div>
                 )}
@@ -663,81 +784,195 @@ export default function CourseManagementPage() {
                         </h2>
                     </div>
 
-                    <div className="overflow-x-auto">
-                        <table className="w-full">
-                            <thead className="bg-gray-50">
-                                <tr>
-                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                        Course
-                                    </th>
-                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                        Level
-                                    </th>
-                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                        Price
-                                    </th>
-                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                        Enrollments
-                                    </th>
-                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                        Status
-                                    </th>
-                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                        Actions
-                                    </th>
-                                </tr>
-                            </thead>
-                            <tbody className="bg-white divide-y divide-gray-200">
-                                {courses.map((course) => (
-                                    <tr key={course.courseId} className="hover:bg-gray-50">
-                                        <td className="px-6 py-4 whitespace-nowrap">
-                                            <div>
-                                                <div className="text-sm font-medium text-gray-900">
-                                                    {course.title}
-                                                </div>
-                                                <div className="text-sm text-gray-500">
-                                                    {course.courseId}
-                                                </div>
-                                            </div>
-                                        </td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                                            <span className={`px-2 py-1 text-xs font-medium rounded-full ${course.level === 'Beginner' ? 'bg-green-100 text-green-800' :
-                                                course.level === 'Intermediate' ? 'bg-yellow-100 text-yellow-800' :
-                                                    'bg-red-100 text-red-800'
-                                                }`}>
-                                                {course.level}
+                    {/* Card Grid View */}
+                    <div className="p-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                        {courses.map((course) => (
+                            <div key={course.courseId} className="border border-gray-200 rounded-lg overflow-hidden hover:shadow-lg transition-shadow">
+                                {/* Course Image */}
+                                <div className="relative h-48 bg-gray-200">
+                                    {course.image ? (
+                                        <img
+                                            src={course.image}
+                                            alt={course.title}
+                                            className="w-full h-full object-cover"
+                                        />
+                                    ) : (
+                                        <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-orange-500 to-orange-600">
+                                            <span className="text-white text-lg font-semibold">
+                                                {course.title.substring(0, 2).toUpperCase()}
                                             </span>
-                                        </td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                                            {course.price === 0 ? 'Free' : `$${course.price}`}
-                                        </td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                                            {course.totalEnrollments}
-                                        </td>
-                                        <td className="px-6 py-4 whitespace-nowrap">
-                                            <span className={`px-2 py-1 text-xs font-medium rounded-full ${course.status === 'published' || course.isActive ? 'bg-green-100 text-green-800' :
-                                                course.status === 'draft' ? 'bg-yellow-100 text-yellow-800' :
-                                                    'bg-red-100 text-red-800'
-                                                }`}>
-                                                {course.status || (course.isActive ? 'Published' : 'Draft')}
+                                        </div>
+                                    )}
+                                    {/* Status Badge */}
+                                    <div className="absolute top-2 right-2 flex gap-2">
+                                        {/* Publication Status */}
+                                        <span className={`px-2 py-1 text-xs font-semibold rounded-full shadow ${course.status === 'published' || course.isActive ? 'bg-green-500 text-white' :
+                                            course.status === 'draft' ? 'bg-yellow-500 text-white' :
+                                                'bg-red-500 text-white'
+                                            }`}>
+                                            {course.status || (course.isActive ? 'Published' : 'Draft')}
+                                        </span>
+                                        {/* Active/Inactive Indicator */}
+                                        {!course.isActive && (
+                                            <span className="px-2 py-1 text-xs font-semibold rounded-full shadow bg-gray-500 text-white">
+                                                Inactive
                                             </span>
-                                        </td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                                        )}
+                                    </div>
+                                </div>
+
+                                {/* Course Content */}
+                                <div className="p-5">
+                                    {/* Title and Level */}
+                                    <div className="mb-3">
+                                        <h3 className="text-lg font-bold text-gray-900 mb-1">
+                                            {course.title}
+                                        </h3>
+                                        <span className={`inline-block px-2 py-1 text-xs font-medium rounded ${course.level === 'Beginner' ? 'bg-green-100 text-green-800' :
+                                            course.level === 'Intermediate' ? 'bg-yellow-100 text-yellow-800' :
+                                                'bg-red-100 text-red-800'
+                                            }`}>
+                                            {course.level}
+                                        </span>
+                                    </div>
+
+                                    {/* Description */}
+                                    <p className="text-sm text-gray-600 mb-4 line-clamp-2">
+                                        {course.description}
+                                    </p>
+
+                                    {/* Course ID */}
+                                    <div className="mb-3 p-2 bg-gray-50 rounded border border-gray-200">
+                                        <p className="text-xs font-mono text-gray-600 break-all">
+                                            ID: {course.courseId}
+                                        </p>
+                                    </div>
+
+                                    {/* Features List */}
+                                    {course.features && course.features.length > 0 && (
+                                        <div className="mb-4">
+                                            <h4 className="text-xs font-semibold text-gray-700 mb-2 uppercase">
+                                                What you'll Learn:
+                                            </h4>
+                                            <ul className="space-y-1">
+                                                {course.features.slice(0, 4).map((feature, idx) => (
+                                                    <li key={idx} className="text-xs text-gray-600 flex items-start">
+                                                        <span className="text-orange-500 mr-2">✓</span>
+                                                        <span className="line-clamp-1">{feature}</span>
+                                                    </li>
+                                                ))}
+                                                {course.features.length > 4 && (
+                                                    <li className="text-xs text-gray-500 italic">
+                                                        +{course.features.length - 4} more features...
+                                                    </li>
+                                                )}
+                                            </ul>
+                                        </div>
+                                    )}
+
+                                    {/* Course Stats */}
+                                    <div className="flex items-center justify-between mb-4 pt-3 border-t border-gray-100">
+                                        <div>
+                                            <p className="text-xs text-gray-500">Price</p>
+                                            <p className="text-xl font-bold text-orange-600">
+                                                {course.price === 0 ? 'Free' : `$${course.price}`}
+                                            </p>
+                                        </div>
+                                        <div className="text-right">
+                                            <p className="text-xs text-gray-500">Enrollments</p>
+                                            <p className="text-lg font-semibold text-gray-900">
+                                                {course.totalEnrollments || 0}
+                                            </p>
+                                        </div>
+                                    </div>
+
+                                    {/* Duration */}
+                                    {course.duration && (
+                                        <div className="mb-4 flex items-center text-sm text-gray-600">
+                                            <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                            </svg>
+                                            {course.duration}
+                                        </div>
+                                    )}
+
+                                    {/* Action Buttons */}
+                                    <div className="space-y-2">
+                                        {/* Primary Actions */}
+                                        <div className="flex gap-2">
                                             <button
                                                 onClick={() => handleEditCourse(course)}
-                                                className="text-blue-600 hover:text-blue-900 mr-3"
+                                                className="flex-1 bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 transition-colors text-sm font-medium"
                                             >
-                                                Edit
+                                                ✏️ Edit
                                             </button>
-                                            <button className="text-red-600 hover:text-red-900">
-                                                Archive
+                                            <button
+                                                onClick={() => handleToggleActive(course)}
+                                                className={`flex-1 px-4 py-2 rounded-md transition-colors text-sm font-medium ${course.isActive
+                                                    ? 'bg-yellow-600 text-white hover:bg-yellow-700'
+                                                    : 'bg-green-600 text-white hover:bg-green-700'
+                                                    }`}
+                                                title={course.isActive ? 'Deactivate (hide from /courses)' : 'Activate (show on /courses)'}
+                                            >
+                                                {course.isActive ? '⏸️ Deactivate' : '▶️ Activate'}
                                             </button>
-                                        </td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
+                                        </div>
+
+                                        {/* Status Change Dropdown */}
+                                        <div className="flex gap-2">
+                                            {course.status !== 'draft' && (
+                                                <button
+                                                    onClick={() => handleChangeStatus(course, 'draft')}
+                                                    className="flex-1 bg-gray-500 text-white px-3 py-1.5 rounded-md hover:bg-gray-600 transition-colors text-xs"
+                                                    title="Mark as draft"
+                                                >
+                                                    📝 Draft
+                                                </button>
+                                            )}
+                                            {course.status !== 'published' && (
+                                                <button
+                                                    onClick={() => handleChangeStatus(course, 'published')}
+                                                    className="flex-1 bg-green-600 text-white px-3 py-1.5 rounded-md hover:bg-green-700 transition-colors text-xs"
+                                                    title="Publish course"
+                                                >
+                                                    🚀 Publish
+                                                </button>
+                                            )}
+                                            {course.status !== 'archived' && (
+                                                <button
+                                                    onClick={() => handleArchiveCourse(course)}
+                                                    className="flex-1 bg-red-600 text-white px-3 py-1.5 rounded-md hover:bg-red-700 transition-colors text-xs"
+                                                    title="Archive course"
+                                                >
+                                                    🗄️ Archive
+                                                </button>
+                                            )}
+                                        </div>
+
+                                        {/* Enrollment Warning */}
+                                        {course.totalEnrollments > 0 && (
+                                            <div className="text-xs text-amber-600 bg-amber-50 px-2 py-1 rounded border border-amber-200">
+                                                ⚠️ {course.totalEnrollments} student{course.totalEnrollments !== 1 ? 's' : ''} enrolled
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                        ))}
                     </div>
+
+                    {/* Empty State */}
+                    {courses.length === 0 && (
+                        <div className="p-12 text-center">
+                            <div className="text-gray-400 mb-4">
+                                <svg className="mx-auto h-12 w-12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+                                </svg>
+                            </div>
+                            <p className="text-gray-500 text-lg font-medium">No courses found</p>
+                            <p className="text-gray-400 text-sm mt-1">Click "Create Course" or "Seed Courses" to get started</p>
+                        </div>
+                    )}
                 </div>
             </div>
         </div>

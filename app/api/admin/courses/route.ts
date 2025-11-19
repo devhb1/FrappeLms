@@ -149,7 +149,8 @@ export async function POST(request: NextRequest) {
             ...validatedData,
             totalEnrollments: 0,
             enrolledUsers: [],
-            isActive: validatedData.status === 'published',
+            isActive: validatedData.status === 'published',  // Auto-activate if published
+            status: validatedData.status || 'draft',
             order: courseOrder,
             createdBy: session.user.email,
             lastModified: new Date(),
@@ -158,8 +159,10 @@ export async function POST(request: NextRequest) {
 
         const savedCourse = await newCourse.save();
 
-        // 7. Clear cache to ensure fresh data
+        // 7. Clear cache to ensure fresh data on /courses page
         await RedisCache.clearCourseCache();
+
+        console.log(`✅ Course created: ${savedCourse.courseId} (Status: ${savedCourse.status}, Active: ${savedCourse.isActive})`);
 
         // 8. Return success response
         return NextResponse.json({
@@ -167,10 +170,11 @@ export async function POST(request: NextRequest) {
             course: {
                 courseId: savedCourse.courseId,
                 title: savedCourse.title,
-                status: validatedData.status,
+                status: savedCourse.status,
+                isActive: savedCourse.isActive,
                 createdAt: savedCourse.createdAt
             },
-            message: 'Course created successfully'
+            message: `Course created successfully${savedCourse.status === 'published' ? ' and is now visible on /courses' : ' as draft (not visible to public)'}`
         }, { status: 201 });
 
     } catch (error) {
@@ -201,15 +205,29 @@ export async function GET(request: NextRequest) {
 
         // 2. Parse query parameters
         const { searchParams } = new URL(request.url);
-        const status = searchParams.get('status'); // draft, published, archived
+        const status = searchParams.get('status'); // draft, published, archived, all
         const category = searchParams.get('category');
         const sortBy = searchParams.get('sortBy') || 'order';
-        const limit = parseInt(searchParams.get('limit') || '50');
+        const limit = parseInt(searchParams.get('limit') || '100');  // Show all courses to admin
+        const includeInactive = searchParams.get('includeInactive') === 'true';
 
-        // 3. Build query filter
+        // 3. Build query filter - admin can see all courses
         const filter: any = {};
-        if (status) filter.status = status;
-        if (category) filter.category = category;
+
+        // Status filter
+        if (status && status !== 'all') {
+            filter.status = status;
+        }
+
+        // Category filter
+        if (category && category !== 'all') {
+            filter.category = category;
+        }
+
+        // Unless specifically requested, show all courses (admins can see inactive ones)
+        if (!includeInactive) {
+            // No filter - show all including inactive
+        }
 
         // 4. Build sort options
         let sortOptions: any = { order: 1 };
@@ -232,18 +250,42 @@ export async function GET(request: NextRequest) {
         await connectToDatabase();
 
         const courses = await Course.find(filter)
-            .select('courseId title description price level image totalEnrollments status isActive createdAt lastModified order')
+            .select('courseId title description price duration level image features totalEnrollments status isActive createdAt lastModified order category')
             .sort(sortOptions)
             .limit(limit)
             .lean();
 
-        // 6. Get summary statistics
+        // 6. Get comprehensive summary statistics
         const stats = await Course.aggregate([
             {
-                $group: {
-                    _id: '$status',
-                    count: { $sum: 1 },
-                    totalEnrollments: { $sum: '$totalEnrollments' }
+                $facet: {
+                    byStatus: [
+                        {
+                            $group: {
+                                _id: '$status',
+                                count: { $sum: 1 },
+                                totalEnrollments: { $sum: '$totalEnrollments' }
+                            }
+                        }
+                    ],
+                    byActive: [
+                        {
+                            $group: {
+                                _id: '$isActive',
+                                count: { $sum: 1 }
+                            }
+                        }
+                    ],
+                    totals: [
+                        {
+                            $group: {
+                                _id: null,
+                                total: { $sum: 1 },
+                                totalEnrollments: { $sum: '$totalEnrollments' },
+                                totalRevenue: { $sum: { $multiply: ['$price', '$totalEnrollments'] } }
+                            }
+                        }
+                    ]
                 }
             }
         ]);
@@ -253,17 +295,39 @@ export async function GET(request: NextRequest) {
             draft: 0,
             published: 0,
             archived: 0,
-            totalEnrollments: 0
+            active: 0,
+            inactive: 0,
+            totalEnrollments: 0,
+            totalRevenue: 0
         };
 
-        stats.forEach(stat => {
-            if (stat._id) {
-                statsMap[stat._id as keyof typeof statsMap] = stat.count;
-            }
-            statsMap.totalEnrollments += stat.totalEnrollments;
-        });
+        // Process status statistics
+        if (stats[0].byStatus) {
+            stats[0].byStatus.forEach((stat: any) => {
+                if (stat._id) {
+                    statsMap[stat._id as keyof typeof statsMap] = stat.count;
+                }
+            });
+        }
 
-        // 7. Return admin course data
+        // Process active/inactive statistics
+        if (stats[0].byActive) {
+            stats[0].byActive.forEach((stat: any) => {
+                if (stat._id === true) statsMap.active = stat.count;
+                if (stat._id === false) statsMap.inactive = stat.count;
+            });
+        }
+
+        // Process totals
+        if (stats[0].totals && stats[0].totals[0]) {
+            statsMap.total = stats[0].totals[0].total;
+            statsMap.totalEnrollments = stats[0].totals[0].totalEnrollments;
+            statsMap.totalRevenue = stats[0].totals[0].totalRevenue;
+        }
+
+        console.log(`📊 Admin fetched ${courses.length} courses (Published: ${statsMap.published}, Draft: ${statsMap.draft}, Archived: ${statsMap.archived})`);
+
+        // 7. Return admin course data with comprehensive statistics
         return NextResponse.json({
             success: true,
             courses,
@@ -272,7 +336,8 @@ export async function GET(request: NextRequest) {
                 status: status || 'all',
                 category: category || 'all',
                 sortBy,
-                limit
+                limit,
+                includeInactive
             }
         });
 

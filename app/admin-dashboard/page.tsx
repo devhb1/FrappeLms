@@ -467,7 +467,7 @@ export default function AdminDashboard() {
                                 <Button
                                     variant="outline"
                                     className="h-20 flex-col"
-                                    onClick={() => setActiveTab('courses')}
+                                    onClick={() => router.push('/admin-dashboard/courses')}
                                 >
                                     <BookOpen className="h-6 w-6 mb-2" />
                                     <span className="text-xs">Manage Courses</span>

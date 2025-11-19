@@ -138,8 +138,11 @@ export async function GET(request: NextRequest) {
         console.log(`💾 Cache miss for key: ${cacheKey}, querying database...`);
         await connectToDatabase();
 
-        // Build MongoDB query object
-        const query: any = { isActive: true };  // Only show active courses
+        // Build MongoDB query object - only show published and active courses to public
+        const query: any = {
+            isActive: true,
+            status: 'published'  // Only show published courses to public users
+        };
 
         // Add level filter if specified
         if (level && validLevels.includes(level)) {
