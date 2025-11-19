@@ -28,16 +28,15 @@ export const getFrappeLMSUrl = (): string => {
  * Get the main LMS access URL for user registration/login
  */
 export const getLMSAccessUrl = (): string => {
-    const baseUrl = getFrappeLMSUrl();
-    return `${baseUrl}/login`;
+    return 'https://lms.maaledu.com/#login';
 };
 
 /**
  * Get the LMS registration URL
+ * Redirects to login page where users can also register
  */
 export const getLMSRegistrationUrl = (): string => {
-    const baseUrl = getFrappeLMSUrl();
-    return `${baseUrl}/signup`;
+    return 'https://lms.maaledu.com/#login';
 };
 
 /**
@@ -53,10 +52,10 @@ export const getCourseAccessUrl = (courseId?: string): string => {
 
 /**
  * Get user dashboard URL in LMS
+ * Redirects to login page for authentication
  */
 export const getLMSDashboardUrl = (): string => {
-    const baseUrl = getFrappeLMSUrl();
-    return `${baseUrl}/dashboard`;
+    return 'https://lms.maaledu.com/#login';
 };
 
 /**
@@ -64,9 +63,9 @@ export const getLMSDashboardUrl = (): string => {
  */
 export const LMS_CONFIG = {
     baseUrl: getFrappeLMSUrl(),
-    accessUrl: getLMSAccessUrl(),
-    registrationUrl: getLMSRegistrationUrl(),
-    dashboardUrl: getLMSDashboardUrl(),
+    accessUrl: 'https://lms.maaledu.com/#login',
+    registrationUrl: 'https://lms.maaledu.com/#login',
+    dashboardUrl: 'https://lms.maaledu.com/#login',
 
     // API endpoints
     api: {

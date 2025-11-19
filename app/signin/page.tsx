@@ -71,18 +71,18 @@ function SignInForm() {
             }
 
             if (result?.ok) {
-                // Small delay to ensure session is set
-                await new Promise(resolve => setTimeout(resolve, 100));
-
                 // Get the updated session to check user role
                 const session = await getSession();
 
+                // Refresh the router to update the session state
+                router.refresh();
+
                 // Redirect based on role or to default dashboard
                 if (session?.user?.role === 'admin') {
-                    router.push('/dashboard');
+                    router.replace('/dashboard');
                 } else {
                     // Redirect all authenticated users to dashboard
-                    router.push('/dashboard');
+                    router.replace('/dashboard');
                 }
             }
         } catch (error) {
