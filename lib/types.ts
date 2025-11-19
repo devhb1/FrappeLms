@@ -87,8 +87,10 @@ export interface CourseEnrollment {
     // Payment and transaction metadata
     paymentMethod?: string
     currency?: string
+    stripeSessionId?: string
     originalAmount?: number
     discountAmount?: number
+    commissionBaseAmount?: number  // Base amount for affiliate commission calculation
     couponCode?: string
 
     // Additional tracking metadata

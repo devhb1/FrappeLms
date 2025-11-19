@@ -262,6 +262,10 @@ const enrollmentSchema = new mongoose.Schema<IEnrollment>({
         type: String,
         default: 'usd'
     },
+    stripeSessionId: {
+        type: String,
+        trim: true
+    },
     originalAmount: {
         type: Number,
         min: 0
