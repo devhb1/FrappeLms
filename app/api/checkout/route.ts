@@ -28,21 +28,30 @@ import { Course, Enrollment, Grant, Affiliate } from '@/lib/models'
 import { sendEmail } from '@/lib/emails'
 import { z } from 'zod'
 import ProductionLogger from '@/lib/utils/production-logger'
+import { checkoutRateLimit } from '@/lib/middleware/rateLimit'
 
 // ===== REQUEST VALIDATION =====
 const checkoutSchema = z.object({
     courseId: z.string().min(1, 'Course ID is required'),
-    email: z.string().email('Valid email is required').optional().or(z.literal('')), // Allow empty string or valid email
+    email: z.string().email('Valid email required').toLowerCase().optional(),
     couponCode: z.string().optional(),
-    affiliateEmail: z.string().email().optional().or(z.literal('')), // Allow empty string
-    openedxUsername: z.string().optional(),
-    openedxEmail: z.string().email('Valid email is required').optional().or(z.literal('')), // Allow empty string or valid email
-    redirectSource: z.enum(['direct', 'lms_redirect', 'affiliate']).default('direct'),
-    requestId: z.string().optional() // Add requestId field
+    affiliateEmail: z.string().email('Valid affiliate email required').toLowerCase().optional().or(z.literal('')),
+    username: z.string().optional(),
+    redirectSource: z.enum(['lms_redirect', 'direct', 'affiliate']).optional(),
+    requestId: z.string().optional()
 });
 
 // ===== MAIN CHECKOUT HANDLER =====
 export async function POST(request: NextRequest) {
+    // Apply rate limiting
+    const rateLimitResponse = await checkoutRateLimit(request);
+    if (rateLimitResponse) {
+        ProductionLogger.warn('Checkout rate limit exceeded', {
+            ip: request.headers.get('x-forwarded-for') || request.headers.get('x-real-ip')
+        });
+        return rateLimitResponse;
+    }
+
     try {
         // 1. Parse and validate request
         const body = await request.json();
@@ -54,17 +63,17 @@ export async function POST(request: NextRequest) {
             email: body.email?.trim() || '',
             couponCode: body.couponCode?.trim() || '',
             affiliateEmail: body.affiliateEmail?.trim() || '',
-            openedxUsername: body.openedxUsername?.trim() || '',
-            openedxEmail: body.openedxEmail?.trim() || ''
+            username: body.username?.trim() || body.openedxUsername?.trim() || '', // Support legacy field
+            requestId: body.requestId?.trim() || ''
         };
 
         ProductionLogger.debug('Cleaned request body', { cleanedKeys: Object.keys(cleanedBody) });
 
         const validatedData = checkoutSchema.parse(cleanedBody);
-        const { courseId, email, couponCode, affiliateEmail, openedxUsername, openedxEmail, redirectSource, requestId } = validatedData;
+        const { courseId, email, couponCode, affiliateEmail, username, redirectSource, requestId } = validatedData;
 
         // 3. Resolve final email with fallbacks
-        const finalEmail = (email && email.trim()) || (openedxEmail && openedxEmail.trim()) || `temp_${Date.now()}@placeholder.com`;
+        const finalEmail = (email && email.trim()) || `temp_${Date.now()}@placeholder.com`;
 
         ProductionLogger.info('Processing checkout request', {
             courseId,
@@ -400,14 +409,11 @@ async function processCouponEnrollment(data: any) {
         enrollmentType: 'free_grant',
         timestamp: new Date().toISOString(),
 
-        // LMS integration data (Updated for FrappeLMS)
+        // LMS integration data
         lmsContext: {
-            frappeUsername: data.openedxUsername,
-            frappeEmail: data.openedxEmail || email,
-            redirectSource: data.affiliateEmail ? 'affiliate' : data.redirectSource || 'direct',
-            // Keep legacy fields for backward compatibility
-            openedxUsername: data.openedxUsername,
-            openedxEmail: data.openedxEmail || email
+            frappeUsername: data.username || email.split('@')[0],
+            frappeEmail: email,
+            redirectSource: data.affiliateEmail ? 'affiliate' : data.redirectSource || 'direct'
         },
 
         // Grant data with enhanced discount tracking
@@ -492,25 +498,107 @@ async function processCouponEnrollment(data: any) {
             payment_id: savedEnrollment.paymentId,
             amount: 0,
             currency: 'USD',
-            referral_code: data.affiliateEmail || undefined
+            referral_code: data.affiliateEmail || undefined,
+            // Grant metadata for Frappe LMS tracking
+            original_amount: course.price || 0,
+            discount_percentage: discountPercentage,
+            grant_id: reservedGrant._id.toString(),
+            enrollment_type: 'free_grant'
         });
 
         if (frappeResult.success) {
-            await Enrollment.findByIdAndUpdate(savedEnrollment._id, {
-                $set: {
-                    'frappeSync.synced': true,
-                    'frappeSync.syncStatus': 'success',
-                    'frappeSync.enrollmentId': frappeResult.enrollment_id,
-                    'frappeSync.syncCompletedAt': new Date(),
-                    'frappeSync.lastSyncAttempt': new Date()
+            if (frappeResult.success) {
+                await Enrollment.findByIdAndUpdate(savedEnrollment._id, {
+                    $set: {
+                        'frappeSync.synced': true,
+                        'frappeSync.syncStatus': 'success',
+                        'frappeSync.enrollmentId': frappeResult.enrollment_id,
+                        'frappeSync.syncCompletedAt': new Date(),
+                        'frappeSync.lastSyncAttempt': new Date()
+                    }
+                });
+                ProductionLogger.info('FrappeLMS enrollment successful (free)', {
+                    enrollmentId: frappeResult.enrollment_id
+                });
+            } else {
+                // IMMEDIATE RETRY before giving up
+                ProductionLogger.warn('First Frappe attempt failed, retrying immediately...', {
+                    error: frappeResult.error
+                });
+
+                await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second
+                const retryResult = await enrollInFrappeLMS({
+                    user_email: email.toLowerCase(),
+                    course_id: courseId,
+                    paid_status: true,
+                    payment_id: savedEnrollment.paymentId,
+                    amount: 0,
+                    currency: 'USD',
+                    referral_code: data.affiliateEmail || undefined,
+                    original_amount: course.price || 0,
+                    discount_percentage: discountPercentage,
+                    grant_id: reservedGrant._id.toString(),
+                    enrollment_type: 'free_grant'
+                });
+
+                if (retryResult.success) {
+                    await Enrollment.findByIdAndUpdate(savedEnrollment._id, {
+                        $set: {
+                            'lmsSync.platform': 'frappe',
+                            'lmsSync.synced': true,
+                            'lmsSync.syncStatus': 'success',
+                            'lmsSync.enrollmentId': retryResult.enrollment_id,
+                            'lmsSync.syncCompletedAt': new Date(),
+                            'lmsSync.retryCount': 1
+                        }
+                    });
+                    ProductionLogger.info('FrappeLMS enrollment successful on retry', {
+                        enrollmentId: retryResult.enrollment_id
+                    });
+                } else {
+                    // ROLLBACK: Both attempts failed
+                    await Enrollment.findByIdAndUpdate(savedEnrollment._id, {
+                        $set: {
+                            status: 'failed',
+                            'frappeSync.synced': false,
+                            'frappeSync.syncStatus': 'failed',
+                            'frappeSync.errorMessage': retryResult.error,
+                            'frappeSync.retryCount': 2
+                        }
+                    });                    // Rollback coupon reservation
+                    await Grant.findByIdAndUpdate(reservedGrant._id, {
+                        $unset: {
+                            couponUsed: 1,
+                            couponUsedAt: 1,
+                            couponUsedBy: 1,
+                            reservedAt: 1
+                        }
+                    });
+
+                    ProductionLogger.error('FrappeLMS enrollment failed after retry - rolled back', {
+                        error: retryResult.error,
+                        grantId: reservedGrant._id
+                    });
+
+                    return NextResponse.json({
+                        error: 'Unable to complete LMS enrollment. Please contact support.',
+                        code: 'LMS_ENROLLMENT_FAILED',
+                        supportEmail: 'support@devhb.com'
+                    }, { status: 500 });
                 }
-            });
+            }
             ProductionLogger.info('FrappeLMS enrollment successful (free)', {
                 enrollmentId: frappeResult.enrollment_id
             });
         } else {
             await Enrollment.findByIdAndUpdate(savedEnrollment._id, {
                 $set: {
+                    'lmsSync.platform': 'frappe',
+                    'lmsSync.synced': false,
+                    'lmsSync.syncStatus': 'failed',
+                    'lmsSync.errorMessage': frappeResult.error,
+                    'lmsSync.lastSyncAttempt': new Date(),
+                    'lmsSync.retryCount': 1,
                     'frappeSync.synced': false,
                     'frappeSync.syncStatus': 'failed',
                     'frappeSync.errorMessage': frappeResult.error,
@@ -530,24 +618,13 @@ async function processCouponEnrollment(data: any) {
     }
     // ===== END FRAPPE LMS INTEGRATION =====
 
-    // 7. Update course enrollment stats
+    // 7. Update course enrollment count only (enrolledUsers removed - use fullEnrollments virtual)
     if (course.source === 'database') {
         await Course.findOneAndUpdate(
             { courseId: courseId },
-            {
-                $inc: { totalEnrollments: 1 },
-                $push: {
-                    enrolledUsers: {
-                        email: email.toLowerCase(),
-                        enrolledAt: new Date(),
-                        paymentId: savedEnrollment.paymentId,
-                        amount: 0,
-                        discountPercentage: discountPercentage,
-                        grantType: 'free'
-                    }
-                }
-            }
+            { $inc: { totalEnrollments: 1 } }
         );
+        ProductionLogger.info('Course stats updated', { courseId });
     }
 
     ProductionLogger.info('Free enrollment completed', {
@@ -606,14 +683,11 @@ async function processStripeCheckout(data: any) {
         status: 'pending',
         enrollmentType: 'paid_stripe',
 
-        // LMS integration data (Updated for FrappeLMS)
+        // LMS integration data
         lmsContext: {
-            frappeUsername: data.openedxUsername,
-            frappeEmail: data.openedxEmail || email,
-            redirectSource: affiliate ? 'affiliate' : data.redirectSource || 'direct',
-            // Keep legacy fields for backward compatibility
-            openedxUsername: data.openedxUsername,
-            openedxEmail: data.openedxEmail || email
+            frappeUsername: data.username || email.split('@')[0],
+            frappeEmail: email,
+            redirectSource: affiliate ? 'affiliate' : data.redirectSource || 'direct'
         },
 
         // Affiliate data (if applicable)
@@ -621,9 +695,13 @@ async function processStripeCheckout(data: any) {
             affiliateEmail: affiliate.email,
             commissionEligible: true,
             commissionRate: affiliate.commissionRate || 10,
-            commissionAmount: Math.round((course.price * (affiliate.commissionRate || 10)) / 100 * 100) / 100, // Calculate commission
+            commissionAmount: Math.round((course.price * (affiliate.commissionRate || 10)) / 100 * 100) / 100,
             referralSource: 'affiliate_link'
         } : null,
+
+        // Commission base amount for accurate calculations
+        originalAmount: course.price,
+        commissionBaseAmount: course.price,
 
         // Set correct referral tracking for affiliate enrollments
         referralSource: affiliate ? 'affiliate_link' : 'direct',
@@ -792,8 +870,8 @@ async function processPartialDiscountCheckout(data: any) {
 
         // LMS integration data
         lmsContext: {
-            openedxUsername: data.openedxUsername,
-            openedxEmail: data.openedxEmail || email,
+            frappeUsername: data.username || email.split('@')[0],
+            frappeEmail: email,
             redirectSource: affiliate ? 'affiliate' : data.redirectSource || 'direct'
         },
 
@@ -809,16 +887,18 @@ async function processPartialDiscountCheckout(data: any) {
             grantType: 'partial'
         },
 
-        // Affiliate data (if applicable) - commission on final price
+        // Affiliate data (if applicable) - commission on amount user actually pays
         affiliateData: affiliate ? {
             affiliateEmail: affiliate.email,
             commissionEligible: true,
             commissionRate: affiliate.commissionRate || 10,
             commissionAmount: Math.round((finalPrice * (affiliate.commissionRate || 10)) / 100 * 100) / 100,
-            referralSource: 'affiliate_link',
-            originalAmount: originalPrice,
-            discountedAmount: finalPrice
+            referralSource: 'affiliate_link'
         } : null,
+
+        // Store both amounts for tracking
+        originalAmount: originalPrice,
+        commissionBaseAmount: finalPrice, // Commission on amount user pays, not original price
 
         // Set referral tracking
         referralSource: affiliate ? 'affiliate_link' : 'direct',

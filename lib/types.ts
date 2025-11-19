@@ -24,19 +24,12 @@ export interface CourseEnrollment {
     // Enhanced fields for OpenEdX LMS integration
     enrollmentType?: 'paid_stripe' | 'free_grant' | 'partial_grant' | 'affiliate_referral' | 'lms_redirect'
 
-    // LMS context data (Updated for FrappeLMS)
+    // LMS integration data (FrappeLMS)
     lmsContext?: {
-        frappeUsername?: string      // Primary FrappeLMS username
-        frappeEmail?: string         // Primary FrappeLMS email
+        frappeUsername?: string
+        frappeEmail?: string
         redirectSource?: 'lms_redirect' | 'direct' | 'affiliate'
-        referrerDomain?: string
-        sessionId?: string
-        redirectUrl?: string
-        frappeCourseId?: string      // FrappeLMS course ID
-        // Legacy fields for backward compatibility
-        openedxUsername?: string
-        openedxEmail?: string
-        openedxCourseId?: string
+        frappeCourseId?: string
     }
 
     // Enhanced affiliate data structure

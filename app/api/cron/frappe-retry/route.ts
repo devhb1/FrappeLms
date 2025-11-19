@@ -84,6 +84,36 @@ export async function POST(request: NextRequest) {
                     workerNodeId: WORKER_NODE_ID
                 });
 
+                // CHECK IDEMPOTENCY: Skip if already enrolled
+                const enrollment = await Enrollment.findById(job.enrollmentId);
+                if (!enrollment) {
+                    throw new Error('Enrollment not found');
+                }
+
+                if (enrollment.frappeSync?.enrollmentId) {
+                    ProductionLogger.info('Skipping retry - already enrolled', {
+                        jobId: job._id,
+                        enrollmentId: job.enrollmentId,
+                        frappeEnrollmentId: enrollment.frappeSync.enrollmentId
+                    });
+
+                    // Mark job as completed (skip duplicate)
+                    await RetryJob.findByIdAndUpdate(job._id, {
+                        $set: {
+                            status: 'completed',
+                            completedAt: new Date()
+                        },
+                        $unset: {
+                            workerNodeId: 1,
+                            processingStartedAt: 1,
+                            processingTimeout: 1
+                        }
+                    });
+
+                    succeededCount++;
+                    continue;
+                }
+
                 // Process the FrappeLMS enrollment
                 const result = await enrollInFrappeLMS(job.payload);
 

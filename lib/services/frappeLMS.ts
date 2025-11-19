@@ -13,10 +13,11 @@
 import ProductionLogger from '@/lib/utils/production-logger';
 
 // FrappeLMS Configuration
+// Production endpoint: https://lms.maaledu.com/api/method/lms.lms.payment_confirmation.confirm_payment
 const FRAPPE_CONFIG = {
-    baseUrl: process.env.FRAPPE_LMS_BASE_URL || 'http://139.59.229.250:8000',
+    baseUrl: process.env.FRAPPE_LMS_BASE_URL || 'https://lms.maaledu.com',
     apiKey: process.env.FRAPPE_LMS_API_KEY || '',
-    timeout: 30000 // 30 seconds
+    timeout: 10000 // 10 seconds (reduced from 30s for faster failure detection)
 };
 
 // ===== TYPE DEFINITIONS =====
@@ -32,6 +33,11 @@ export interface FrappeEnrollmentRequest {
     amount?: number;
     currency?: string;
     referral_code?: string;
+    // Grant metadata fields
+    original_amount?: number;
+    discount_percentage?: number;
+    grant_id?: string;
+    enrollment_type?: string;
 }
 
 /**

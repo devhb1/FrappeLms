@@ -305,71 +305,79 @@ export async function POST(req: NextRequest) {
             try {
                 console.log(`🎓 Enrolling user in FrappeLMS...`);
 
-                const { enrollInFrappeLMS } = await import('@/lib/services/frappeLMS');
-
-                const frappeResult = await enrollInFrappeLMS({
-                    user_email: customerEmail,
-                    course_id: metadata.courseId,
-                    paid_status: true,
-                    payment_id: updatedEnrollment.paymentId,
-                    amount: updatedEnrollment.amount,
-                    currency: 'USD',
-                    referral_code: affiliateEmail || undefined
-                });
-
-                if (frappeResult.success) {
-                    // Update enrollment with FrappeLMS data
-                    await Enrollment.findByIdAndUpdate(updatedEnrollment._id, {
-                        $set: {
-                            'frappeSync.synced': true,
-                            'frappeSync.syncStatus': 'success',
-                            'frappeSync.enrollmentId': frappeResult.enrollment_id,
-                            'frappeSync.syncCompletedAt': new Date(),
-                            'frappeSync.lastSyncAttempt': new Date()
-                        }
-                    });
-
-                    ProductionLogger.info('FrappeLMS enrollment successful', {
+                // IDEMPOTENCY CHECK: Skip if already enrolled
+                if (updatedEnrollment.frappeSync?.enrollmentId) {
+                    ProductionLogger.info('Skipping Frappe enrollment - already enrolled', {
                         enrollmentId: updatedEnrollment._id,
-                        frappeEnrollmentId: frappeResult.enrollment_id,
-                        customerEmail
+                        frappeEnrollmentId: updatedEnrollment.frappeSync.enrollmentId
                     });
                 } else {
-                    // Queue for retry instead of marking as failed
-                    const retryJob = await RetryJob.create({
-                        jobType: 'frappe_enrollment',
-                        enrollmentId: updatedEnrollment._id,
-                        payload: {
-                            user_email: customerEmail,
-                            course_id: metadata.courseId,
-                            paid_status: true,
-                            payment_id: updatedEnrollment.paymentId,
-                            amount: updatedEnrollment.amount,
-                            currency: 'USD',
-                            referral_code: affiliateEmail || undefined,
-                            enrollmentType: updatedEnrollment.enrollmentType || 'paid_stripe',
-                            originalRequestId: metadata.requestId
-                        },
-                        nextRetryAt: new Date(Date.now() + 2 * 60 * 1000) // Retry in 2 minutes
-                    });
+                    const { enrollInFrappeLMS } = await import('@/lib/services/frappeLMS');
 
-                    // Mark enrollment as queued for retry
-                    await Enrollment.findByIdAndUpdate(updatedEnrollment._id, {
-                        $set: {
-                            'frappeSync.synced': false,
-                            'frappeSync.syncStatus': 'retrying',
-                            'frappeSync.errorMessage': frappeResult.error,
-                            'frappeSync.lastSyncAttempt': new Date(),
-                            'frappeSync.retryJobId': retryJob._id
-                        }
-                    });
+                    const frappeResult = await enrollInFrappeLMS({
+                        user_email: customerEmail,
+                        course_id: metadata.courseId,
+                        paid_status: true,
+                        payment_id: updatedEnrollment.paymentId,
+                        amount: updatedEnrollment.amount,
+                        currency: 'USD',
+                        referral_code: affiliateEmail || undefined,
+                        // Grant metadata for partial discounts
+                        original_amount: updatedEnrollment.originalAmount,
+                        discount_percentage: updatedEnrollment.grantData?.discountPercentage,
+                        grant_id: updatedEnrollment.grantData?.grantId?.toString()
+                    }); if (frappeResult.success) {
+                        // Update enrollment with FrappeLMS data
+                        await Enrollment.findByIdAndUpdate(updatedEnrollment._id, {
+                            $set: {
+                                'frappeSync.synced': true,
+                                'frappeSync.syncStatus': 'success',
+                                'frappeSync.enrollmentId': frappeResult.enrollment_id,
+                                'frappeSync.syncCompletedAt': new Date(),
+                                'frappeSync.lastSyncAttempt': new Date()
+                            }
+                        });
 
-                    ProductionLogger.warn('FrappeLMS enrollment failed, queued for retry', {
-                        enrollmentId: updatedEnrollment._id,
-                        retryJobId: retryJob._id,
-                        error: frappeResult.error,
-                        nextRetryAt: retryJob.nextRetryAt
-                    });
+                        ProductionLogger.info('FrappeLMS enrollment successful', {
+                            enrollmentId: updatedEnrollment._id,
+                            frappeEnrollmentId: frappeResult.enrollment_id,
+                            customerEmail
+                        });
+                    } else {
+                        // Queue for retry instead of marking as failed
+                        const retryJob = await RetryJob.create({
+                            jobType: 'frappe_enrollment',
+                            enrollmentId: updatedEnrollment._id,
+                            payload: {
+                                user_email: customerEmail,
+                                course_id: metadata.courseId,
+                                paid_status: true,
+                                payment_id: updatedEnrollment.paymentId,
+                                amount: updatedEnrollment.amount,
+                                currency: 'USD',
+                                referral_code: affiliateEmail || undefined,
+                                enrollmentType: updatedEnrollment.enrollmentType || 'paid_stripe',
+                                originalRequestId: metadata.requestId
+                            },
+                            nextRetryAt: new Date(Date.now() + 2 * 60 * 1000) // Retry in 2 minutes
+                        });
+
+                        // Mark enrollment as queued for retry
+                        await Enrollment.findByIdAndUpdate(updatedEnrollment._id, {
+                            $set: {
+                                'frappeSync.synced': false,
+                                'frappeSync.syncStatus': 'retrying',
+                                'frappeSync.errorMessage': frappeResult.error,
+                                'frappeSync.lastSyncAttempt': new Date(),
+                                'frappeSync.retryJobId': retryJob._id
+                            }
+                        }); ProductionLogger.warn('FrappeLMS enrollment failed, queued for retry', {
+                            enrollmentId: updatedEnrollment._id,
+                            retryJobId: retryJob._id,
+                            error: frappeResult.error,
+                            nextRetryAt: retryJob.nextRetryAt
+                        });
+                    }
                 }
             } catch (frappeError) {
                 const errorMessage = frappeError instanceof Error ? frappeError.message : 'Unknown error';
@@ -395,6 +403,11 @@ export async function POST(req: NextRequest) {
 
                     await Enrollment.findByIdAndUpdate(updatedEnrollment._id, {
                         $set: {
+                            'lmsSync.synced': false,
+                            'lmsSync.syncStatus': 'retrying',
+                            'lmsSync.errorMessage': errorMessage,
+                            'lmsSync.lastSyncAttempt': new Date(),
+                            'lmsSync.retryJobId': retryJob._id,
                             'frappeSync.synced': false,
                             'frappeSync.syncStatus': 'retrying',
                             'frappeSync.errorMessage': errorMessage,
@@ -482,11 +495,14 @@ async function processAffiliateCommission(enrollment: any, affiliateEmail: strin
 
         console.log(`✅ Found affiliate: ${affiliate.name} (${affiliate.email})`);
 
-        // Calculate commission (default 10%)
+        // Calculate commission on commissionBaseAmount (amount user paid)
+        // For full-price purchases: commissionBaseAmount = course price
+        // For partial grants: commissionBaseAmount = discounted price user paid
         const commissionRate = affiliate.commissionRate || 10;
-        const commissionAmount = Math.round((enrollment.amount * commissionRate) / 100 * 100) / 100;
+        const basePrice = enrollment.commissionBaseAmount || enrollment.originalAmount || enrollment.amount;
+        const commissionAmount = Math.round((basePrice * commissionRate) / 100 * 100) / 100;
 
-        console.log(`💰 Commission calculation: $${enrollment.amount} × ${commissionRate}% = $${commissionAmount}`);
+        console.log(`💰 Commission calculation: $${basePrice} (commission base) × ${commissionRate}% = $${commissionAmount}`);
 
         // Update enrollment with commission details
         const enrollmentUpdate = await Enrollment.findByIdAndUpdate(enrollment._id, {

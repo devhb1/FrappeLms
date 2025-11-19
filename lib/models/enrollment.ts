@@ -126,7 +126,7 @@ const enrollmentSchema = new mongoose.Schema<IEnrollment>({
         default: 'paid_stripe'
     },
 
-    // LMS context data (Updated for FrappeLMS)
+    // LMS context data (FrappeLMS integration)
     lmsContext: {
         frappeUsername: {
             type: String,
@@ -143,16 +143,6 @@ const enrollmentSchema = new mongoose.Schema<IEnrollment>({
             type: String,
             enum: ['lms_redirect', 'direct', 'affiliate'],
             default: 'direct'
-        },
-        // Legacy fields for backward compatibility
-        openedxUsername: {
-            type: String,
-            trim: true
-        },
-        openedxEmail: {
-            type: String,
-            lowercase: true,
-            trim: true
         }
     },
 
@@ -228,7 +218,7 @@ const enrollmentSchema = new mongoose.Schema<IEnrollment>({
         }
     },
 
-    // FrappeLMS sync tracking (Updated from OpenEdX)
+    // FrappeLMS sync tracking
     frappeSync: {
         synced: {
             type: Boolean,
@@ -255,38 +245,13 @@ const enrollmentSchema = new mongoose.Schema<IEnrollment>({
         },
         syncCompletedAt: {
             type: Date
+        },
+        retryJobId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'RetryJob'
         }
     },
 
-    // Legacy OpenEdX sync (for backward compatibility)
-    openedxSync: {
-        synced: {
-            type: Boolean,
-            default: false
-        },
-        lastSyncAttempt: {
-            type: Date
-        },
-        syncStatus: {
-            type: String,
-            enum: ['pending', 'success', 'failed', 'retrying'],
-            default: 'pending'
-        },
-        enrollmentId: {
-            type: String
-        },
-        errorMessage: {
-            type: String
-        },
-        retryCount: {
-            type: Number,
-            default: 0,
-            min: 0
-        },
-        syncCompletedAt: {
-            type: Date
-        }
-    },
 
     // Payment and transaction metadata
     paymentMethod: {
@@ -305,6 +270,11 @@ const enrollmentSchema = new mongoose.Schema<IEnrollment>({
         type: Number,
         min: 0,
         default: 0
+    },
+    // Base amount for affiliate commission calculation (before discounts)
+    commissionBaseAmount: {
+        type: Number,
+        min: 0
     },
     couponCode: {
         type: String,
@@ -373,9 +343,6 @@ enrollmentSchema.index({ 'lmsContext.frappeUsername': 1 });
 // Stripe webhook idempotency indexes
 enrollmentSchema.index({ 'stripeEvents.eventId': 1 });
 
-// Legacy OpenEdX indexes (for backward compatibility)
-enrollmentSchema.index({ 'openedxSync.syncStatus': 1, createdAt: -1 });
-enrollmentSchema.index({ 'lmsContext.openedxUsername': 1 });
 
 // Compound indexes for common queries
 enrollmentSchema.index({ email: 1, courseId: 1, status: 1 });

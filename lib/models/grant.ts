@@ -59,6 +59,7 @@ export interface IGrant extends Document {
     couponUsedAt?: Date;                        // Timestamp of coupon usage
     couponUsedBy?: string;                      // Email of user who redeemed (verification)
     reservedAt?: Date;                          // Timestamp when coupon was atomically reserved (prevents race conditions)
+    enrollmentId?: mongoose.Types.ObjectId;     // Link to enrollment record
 
     // ===== DISCOUNT CONTROL SYSTEM (v2.1) =====
     discountPercentage?: number;                // Admin-selected discount (10-100, default: 100)
@@ -157,6 +158,10 @@ const grantSchema: Schema<IGrant> = new mongoose.Schema({
             },
             message: 'reservedAt can only be set when coupon is used'
         }
+    },
+    enrollmentId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Enrollment'
     },
 
     // ===== NEW DISCOUNT CONTROL FIELDS (v2.1) =====
