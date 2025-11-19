@@ -544,12 +544,11 @@ async function processCouponEnrollment(data: any) {
                 if (retryResult.success) {
                     await Enrollment.findByIdAndUpdate(savedEnrollment._id, {
                         $set: {
-                            'lmsSync.platform': 'frappe',
-                            'lmsSync.synced': true,
-                            'lmsSync.syncStatus': 'success',
-                            'lmsSync.enrollmentId': retryResult.enrollment_id,
-                            'lmsSync.syncCompletedAt': new Date(),
-                            'lmsSync.retryCount': 1
+                            'frappeSync.synced': true,
+                            'frappeSync.syncStatus': 'success',
+                            'frappeSync.enrollmentId': retryResult.enrollment_id,
+                            'frappeSync.syncCompletedAt': new Date(),
+                            'frappeSync.retryCount': 1
                         }
                     });
                     ProductionLogger.info('FrappeLMS enrollment successful on retry', {
@@ -593,12 +592,6 @@ async function processCouponEnrollment(data: any) {
         } else {
             await Enrollment.findByIdAndUpdate(savedEnrollment._id, {
                 $set: {
-                    'lmsSync.platform': 'frappe',
-                    'lmsSync.synced': false,
-                    'lmsSync.syncStatus': 'failed',
-                    'lmsSync.errorMessage': frappeResult.error,
-                    'lmsSync.lastSyncAttempt': new Date(),
-                    'lmsSync.retryCount': 1,
                     'frappeSync.synced': false,
                     'frappeSync.syncStatus': 'failed',
                     'frappeSync.errorMessage': frappeResult.error,

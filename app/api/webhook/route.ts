@@ -403,11 +403,6 @@ export async function POST(req: NextRequest) {
 
                     await Enrollment.findByIdAndUpdate(updatedEnrollment._id, {
                         $set: {
-                            'lmsSync.synced': false,
-                            'lmsSync.syncStatus': 'retrying',
-                            'lmsSync.errorMessage': errorMessage,
-                            'lmsSync.lastSyncAttempt': new Date(),
-                            'lmsSync.retryJobId': retryJob._id,
                             'frappeSync.synced': false,
                             'frappeSync.syncStatus': 'retrying',
                             'frappeSync.errorMessage': errorMessage,
