@@ -51,8 +51,13 @@ function SignInForm() {
             const result = await signIn('credentials', {
                 email: email.toLowerCase().trim(),
                 password,
-                redirect: false,
+                redirect: true,
+                callbackUrl: '/dashboard'
             });
+
+            // If redirect: true is used, this code won't execute on success
+            // NextAuth will automatically redirect to callbackUrl
+            // This only executes if there's an error
 
             if (result?.error) {
                 // Handle specific error types
@@ -68,22 +73,6 @@ function SignInForm() {
                 }
                 setIsLoading(false);
                 return;
-            }
-
-            if (result?.ok) {
-                // Get the updated session to check user role
-                const session = await getSession();
-
-                // Refresh the router to update the session state
-                router.refresh();
-
-                // Redirect based on role or to default dashboard
-                if (session?.user?.role === 'admin') {
-                    router.replace('/dashboard');
-                } else {
-                    // Redirect all authenticated users to dashboard
-                    router.replace('/dashboard');
-                }
             }
         } catch (error) {
             console.error('SignIn error:', error);
