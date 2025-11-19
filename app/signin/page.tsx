@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, Suspense } from 'react';
+import { useState, Suspense, useEffect } from 'react';
 import { signIn, getSession } from 'next-auth/react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Button } from '@/components/ui/button';
@@ -35,6 +35,23 @@ function SignInForm() {
     const router = useRouter();
     const searchParams = useSearchParams();
     const callbackUrl = searchParams.get('callbackUrl') || '/dashboard';
+
+    // Check for NextAuth error in URL params
+    useEffect(() => {
+        const urlError = searchParams.get('error');
+        if (urlError) {
+            switch (urlError) {
+                case 'CredentialsSignin':
+                    setError('Invalid email or password');
+                    break;
+                case 'Configuration':
+                    setError('Authentication service error');
+                    break;
+                default:
+                    setError('Authentication failed. Please try again.');
+            }
+        }
+    }, [searchParams]);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
