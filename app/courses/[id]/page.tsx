@@ -112,8 +112,8 @@ export default function CourseDetailPage() {
     const [course, setCourse] = useState<Course | null>(null);
     const [loading, setLoading] = useState(true);
     const [email, setEmail] = useState(urlEmail);
-    const [openedxUsername, setOpenedxUsername] = useState(lmsRedirectData.openedx_username || 'testuser');
-    const [openedxEmail, setOpenedxEmail] = useState(lmsRedirectData.openedx_email || '');
+    const [username, setUsername] = useState(lmsRedirectData.openedx_username || 'testuser');
+    const [lmsEmail, setLmsEmail] = useState(lmsRedirectData.openedx_email || '');
     const [affiliateId, setAffiliateId] = useState(lmsRedirectData.affiliate_email || '');
 
     // Update form fields when URL parameters change
@@ -123,21 +123,21 @@ export default function CourseDetailPage() {
             setEmail(newUrlEmail);
         }
 
-        const newOpenedxUsername = lmsRedirectData.openedx_username || '';
-        if (newOpenedxUsername && newOpenedxUsername !== openedxUsername) {
-            setOpenedxUsername(newOpenedxUsername);
+        const newUsername = lmsRedirectData.openedx_username || '';
+        if (newUsername && newUsername !== username) {
+            setUsername(newUsername);
         }
 
-        const newOpenedxEmail = lmsRedirectData.openedx_email || '';
-        if (newOpenedxEmail && newOpenedxEmail !== openedxEmail) {
-            setOpenedxEmail(newOpenedxEmail);
+        const newLmsEmail = lmsRedirectData.openedx_email || '';
+        if (newLmsEmail && newLmsEmail !== lmsEmail) {
+            setLmsEmail(newLmsEmail);
         }
 
         const newAffiliateId = lmsRedirectData.affiliate_email || '';
         if (newAffiliateId && newAffiliateId !== affiliateId) {
             setAffiliateId(newAffiliateId);
         }
-    }, [searchParams, lmsRedirectData.openedx_email, lmsRedirectData.openedx_username, lmsRedirectData.affiliate_email]);
+    }, [searchParams, lmsRedirectData.openedx_email, lmsRedirectData.openedx_username, lmsRedirectData.affiliate_email, username, lmsEmail, email, affiliateId]);
 
     // Add validation state for self-referral
     const [validationState, setValidationState] = useState({
@@ -313,7 +313,7 @@ export default function CourseDetailPage() {
 
     // Validation function to check for self-referral
     const validateEnrollmentInputs = () => {
-        const primaryEmail = (email.trim() || openedxEmail.trim()).toLowerCase();
+        const primaryEmail = (email.trim() || lmsEmail.trim()).toLowerCase();
         const affiliateEmailValue = affiliateId.trim().toLowerCase();
 
         if (affiliateEmailValue && affiliateEmailValue.includes('@') &&
@@ -335,7 +335,7 @@ export default function CourseDetailPage() {
     // Run validation when relevant fields change
     useEffect(() => {
         validateEnrollmentInputs();
-    }, [email, openedxEmail, affiliateId]);
+    }, [email, lmsEmail, affiliateId]);
 
     // 💳 SINGLE PATH: Consolidated enrollment via checkout API
     const handleBuyNow = async () => {
@@ -364,8 +364,8 @@ export default function CourseDetailPage() {
         }
 
         // Validation - Either OpenEdX username OR email must be provided
-        const hasUsername = openedxUsername.trim();
-        const hasEmail = email.trim() || openedxEmail.trim();
+        const hasUsername = username.trim();
+        const hasEmail = email.trim() || lmsEmail.trim();
 
         if (!hasUsername && !hasEmail) {
             toast({
@@ -404,7 +404,7 @@ export default function CourseDetailPage() {
         }
 
         // Validate OpenEdX email if provided
-        if (openedxEmail && !emailRegex.test(openedxEmail)) {
+        if (lmsEmail && !emailRegex.test(lmsEmail)) {
             toast({
                 title: "Invalid MaalEdu LMS Email",
                 description: "Please enter a valid MaalEdu LMS email address.",
@@ -430,7 +430,7 @@ export default function CourseDetailPage() {
             const checkoutUrl = '/api/checkout';
 
             // Create primary email with proper validation
-            const primaryEmail = email.trim() || openedxEmail.trim() || '';
+            const primaryEmail = email.trim() || lmsEmail.trim() || '';
 
             // Validate required fields before sending - make username optional if email provided
             if (!primaryEmail) {
@@ -438,13 +438,13 @@ export default function CourseDetailPage() {
             }
 
             // Username is recommended but not required if email is provided
-            if (!openedxUsername.trim() && !primaryEmail) {
+            if (!username.trim() && !primaryEmail) {
                 throw new Error('Either MaalEdu LMS username or email address is required');
             } console.log('📋 Checkout details:', {
                 primaryEmail,
                 hasEmail: !!email.trim(),
-                hasOpenedxUsername: !!openedxUsername.trim(),
-                hasOpenedxEmail: !!openedxEmail.trim(),
+                hasUsername: !!username.trim(),
+                hasLmsEmail: !!lmsEmail.trim(),
                 redirectSource: lmsRedirectData.redirect_source
             });
 
@@ -471,8 +471,7 @@ export default function CourseDetailPage() {
                 email: primaryEmail || undefined,
                 couponCode: couponCode.trim() || undefined,
                 affiliateEmail: cleanAffiliateEmail || undefined,
-                openedxUsername: openedxUsername.trim() || lmsRedirectData.openedx_username || undefined,
-                openedxEmail: openedxEmail.trim() || lmsRedirectData.openedx_email || undefined,
+                username: username.trim() || lmsRedirectData.openedx_username || undefined,
                 redirectSource: lmsRedirectData.redirect_source as 'lms_redirect' | 'direct' | 'affiliate',
                 requestId: requestId
             };
@@ -1063,7 +1062,7 @@ export default function CourseDetailPage() {
                                         setEmail(e.target.value)
                                         // Auto-sync with OpenEdX email if not pre-filled
                                         if (!lmsRedirectData.openedx_email) {
-                                            setOpenedxEmail(e.target.value)
+                                            setLmsEmail(e.target.value)
                                         }
                                     }}
                                     className="mt-2"
@@ -1093,8 +1092,8 @@ export default function CourseDetailPage() {
                                     id="openedx-username"
                                     type="text"
                                     placeholder="your_maaledu_username"
-                                    value={openedxUsername}
-                                    onChange={(e) => setOpenedxUsername(e.target.value)}
+                                    value={username}
+                                    onChange={(e) => setUsername(e.target.value)}
                                     className="mt-2"
                                     readOnly={!!lmsRedirectData.openedx_username}
                                     disabled={!!lmsRedirectData.openedx_username}
@@ -1192,7 +1191,7 @@ export default function CourseDetailPage() {
                             <div className="flex gap-3">
                                 <Button
                                     onClick={handleBuyNow}
-                                    disabled={isLoading || (!openedxUsername.trim() && !email.trim()) || validationState.hasSelfReferral}
+                                    disabled={isLoading || (!username.trim() && !email.trim()) || validationState.hasSelfReferral}
                                     className="flex-1 bg-orange-600 hover:bg-orange-700 text-white disabled:opacity-50"
                                 >
                                     {isLoading ? (
