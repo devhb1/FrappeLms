@@ -112,17 +112,27 @@ export type AffiliateRegistrationData = z.infer<typeof affiliateRegistrationSche
 
 /**
  * Generate affiliate link using email as identifier
- * This is the ONLY identifier we need - the email itself
+ * Points to frontend course page or homepage with affiliate tracking
+ * 
+ * @param email - Affiliate's email address
+ * @param courseId - Optional course ID for direct course links
+ * @returns Affiliate tracking URL
  */
-export function generateAffiliateLink(email: string): string {
+export function generateAffiliateLink(email: string, courseId?: string): string {
     const encodedEmail = encodeURIComponent(email);
-    const baseUrl = process.env.NEXT_PUBLIC_FRAPPE_LMS_URL ||
-        process.env.FRAPPE_LMS_BASE_URL ||
-        'http://139.59.229.250:8000';
 
-    // Remove protocol prefix for display link
-    const displayUrl = baseUrl.replace(/^https?:\/\//, '');
-    return `${displayUrl}/?ref=${encodedEmail}`;
+    // Use frontend URL (Vercel deployment) instead of LMS
+    const baseUrl = process.env.NEXT_PUBLIC_SITE_URL ||
+        process.env.NEXT_PUBLIC_APP_URL ||
+        'https://frappe-lms-five.vercel.app';
+
+    // Generate course-specific link if courseId provided
+    if (courseId) {
+        return `${baseUrl}/courses/${encodeURIComponent(courseId)}?ref=${encodedEmail}`;
+    }
+
+    // Generic affiliate link to homepage
+    return `${baseUrl}/?ref=${encodedEmail}`;
 }
 
 /**

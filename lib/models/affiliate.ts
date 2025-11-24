@@ -407,14 +407,19 @@ affiliateSchema.statics.updateStatsFromEnrollments = async function (affiliateEm
 };
 
 // ===== INSTANCE METHODS =====
-affiliateSchema.methods.generateAffiliateLink = function (baseUrl?: string) {
-    // Import the config here to avoid circular dependencies
-    const defaultUrl = process.env.NEXT_PUBLIC_FRAPPE_LMS_URL ||
-        process.env.FRAPPE_LMS_BASE_URL ||
-        'http://139.59.229.250:8000';
+affiliateSchema.methods.generateAffiliateLink = function (courseId?: string) {
+    // Use frontend URL (Vercel) instead of LMS
+    const baseUrl = process.env.NEXT_PUBLIC_SITE_URL ||
+        process.env.NEXT_PUBLIC_APP_URL ||
+        'https://frappe-lms-five.vercel.app';
 
-    const finalUrl = baseUrl || defaultUrl;
-    return `${finalUrl}/?ref=${encodeURIComponent(this.email)}`;
+    // Generate course-specific link if courseId provided
+    if (courseId) {
+        return `${baseUrl}/courses/${encodeURIComponent(courseId)}?ref=${encodeURIComponent(this.email)}`;
+    }
+
+    // Generic affiliate link to homepage
+    return `${baseUrl}/?ref=${encodeURIComponent(this.email)}`;
 };
 
 affiliateSchema.methods.refreshStats = function () {

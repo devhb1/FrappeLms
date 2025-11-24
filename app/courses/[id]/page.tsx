@@ -106,19 +106,20 @@ export default function CourseDetailPage() {
         utm_campaign: searchParams.get('utm_campaign')
     };
 
-    // Get email from URL params (support both 'email' and 'openedx_email')
-    const urlEmail = searchParams.get('email') || lmsRedirectData.openedx_email || '';
+    // Get email from URL params (support 'email', 'usermail', and 'openedx_email')
+    const urlEmail = searchParams.get('usermail') || searchParams.get('email') || lmsRedirectData.openedx_email || '';
 
     const [course, setCourse] = useState<Course | null>(null);
     const [loading, setLoading] = useState(true);
     const [email, setEmail] = useState(urlEmail);
     const [username, setUsername] = useState(lmsRedirectData.openedx_username || 'testuser');
     const [lmsEmail, setLmsEmail] = useState(lmsRedirectData.openedx_email || '');
-    const [affiliateId, setAffiliateId] = useState(lmsRedirectData.affiliate_email || '');
+    // Support both 'ref' and 'affiliate_email' URL params
+    const [affiliateId, setAffiliateId] = useState(searchParams.get('ref') || lmsRedirectData.affiliate_email || '');
 
     // Update form fields when URL parameters change
     useEffect(() => {
-        const newUrlEmail = searchParams.get('email') || lmsRedirectData.openedx_email || '';
+        const newUrlEmail = searchParams.get('usermail') || searchParams.get('email') || lmsRedirectData.openedx_email || '';
         if (newUrlEmail && newUrlEmail !== email) {
             setEmail(newUrlEmail);
         }
@@ -133,7 +134,7 @@ export default function CourseDetailPage() {
             setLmsEmail(newLmsEmail);
         }
 
-        const newAffiliateId = lmsRedirectData.affiliate_email || '';
+        const newAffiliateId = searchParams.get('ref') || lmsRedirectData.affiliate_email || '';
         if (newAffiliateId && newAffiliateId !== affiliateId) {
             setAffiliateId(newAffiliateId);
         }
