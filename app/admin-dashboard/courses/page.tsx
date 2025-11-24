@@ -49,12 +49,21 @@ export default function CourseManagementPage() {
 
     const fetchCourses = async () => {
         try {
-            const response = await fetch('/api/admin/courses');
+            // Add cache-busting query parameter to ensure fresh data from MongoDB
+            const cacheBuster = `?_=${Date.now()}`;
+            const response = await fetch(`/api/admin/courses${cacheBuster}`, {
+                cache: 'no-store', // Prevent browser caching
+                headers: {
+                    'Cache-Control': 'no-cache',
+                    'Pragma': 'no-cache'
+                }
+            });
             const data = await response.json();
 
             if (data.success) {
                 setCourses(data.courses);
                 setStats(data.statistics);
+                console.log('📊 Fetched courses from DB:', data.courses.length);
             }
         } catch (error) {
             console.error('Failed to fetch courses:', error);
