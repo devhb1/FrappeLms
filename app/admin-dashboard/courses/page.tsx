@@ -17,6 +17,7 @@ export default function CourseManagementPage() {
 
     // Form state for new course
     const [newCourse, setNewCourse] = useState<CourseFormData>({
+        courseId: '',
         title: '',
         description: '',
         price: 0,
@@ -29,6 +30,7 @@ export default function CourseManagementPage() {
 
     // Form state for editing course
     const [editCourse, setEditCourse] = useState<CourseFormData>({
+        courseId: '',
         title: '',
         description: '',
         price: 0,
@@ -458,6 +460,25 @@ export default function CourseManagementPage() {
                         </div>
 
                         <form onSubmit={handleCreateCourse} className="space-y-4">
+                            {/* Course ID Field - CRITICAL for LMS Integration */}
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">
+                                    Course ID <span className="text-red-500">*</span>
+                                    <span className="text-xs text-gray-500 ml-2">(Must match your LMS system)</span>
+                                </label>
+                                <input
+                                    type="text"
+                                    value={newCourse.courseId}
+                                    onChange={(e) => setNewCourse(prev => ({ ...prev, courseId: e.target.value }))}
+                                    placeholder="course-v1:MAALEDU+blockchain101+2025_Q1"
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono text-sm"
+                                    required
+                                />
+                                <p className="text-xs text-gray-500 mt-1">
+                                    Examples: <code className="bg-gray-100 px-1 py-0.5 rounded">course-v1:ORG+COURSE+RUN</code> or <code className="bg-gray-100 px-1 py-0.5 rounded">blockchain-basics</code>
+                                </p>
+                            </div>
+
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                 <div>
                                     <label className="block text-sm font-medium text-gray-700 mb-1">

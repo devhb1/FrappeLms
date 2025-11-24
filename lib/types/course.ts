@@ -33,6 +33,7 @@ export interface Course {
 
 // Course creation form data
 export interface CourseFormData {
+    courseId: string;     // Required: Must match LMS course identifier
     title: string;
     description: string;
     price: number;
