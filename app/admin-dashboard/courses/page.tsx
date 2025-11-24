@@ -158,6 +158,7 @@ export default function CourseManagementPage() {
                 const courseData = result.course;
                 setEditingCourse(course);
                 setEditCourse({
+                    courseId: courseData.courseId || '',
                     title: courseData.title || '',
                     description: courseData.description || '',
                     price: courseData.price || 0,
@@ -196,6 +197,7 @@ export default function CourseManagementPage() {
                 setShowEditForm(false);
                 setEditingCourse(null);
                 setEditCourse({
+                    courseId: '',
                     title: '',
                     description: '',
                     price: 0,
