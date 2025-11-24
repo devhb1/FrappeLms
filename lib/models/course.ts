@@ -96,7 +96,7 @@ const courseSchema: Schema<ICourse> = new mongoose.Schema({
         trim: true,
         lowercase: true,
         validate: {
-            validator: function(value: string) {
+            validator: function (value: string) {
                 // Accept letters, numbers, hyphens, underscores, colons, plus, dots, percent, and forward slashes
                 // This matches Open edX course ID format: course-v1:Org+Course+Run
                 return /^[a-zA-Z0-9-_:+.%\/]+$/.test(value);

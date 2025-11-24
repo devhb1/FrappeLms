@@ -36,23 +36,23 @@ function sanitizeCourseId(courseId: string): string {
 
     // Trim whitespace and convert to lowercase
     let sanitized = courseId.trim().toLowerCase();
-    
+
     // Replace spaces with hyphens
     sanitized = sanitized.replace(/\s+/g, '-');
-    
+
     // Remove any characters that aren't allowed (keep: letters, numbers, - _ : + . % /)
     sanitized = sanitized.replace(/[^a-z0-9-_:+.%\/]/g, '');
-    
+
     // Remove consecutive hyphens
     sanitized = sanitized.replace(/-+/g, '-');
-    
+
     // Remove leading/trailing hyphens
     sanitized = sanitized.replace(/^-+|-+$/g, '');
-    
+
     if (sanitized.length < 3 || sanitized.length > 100) {
         throw new Error('Course ID must be between 3 and 100 characters');
     }
-    
+
     return sanitized;
 }
 
@@ -208,7 +208,7 @@ export async function POST(request: NextRequest) {
 
     } catch (error: any) {
         console.error('Course creation error:', error);
-        
+
         // Enhanced error logging for debugging
         if (error.errors) {
             console.error('Mongoose validation errors:', JSON.stringify(error.errors, null, 2));
@@ -221,7 +221,7 @@ export async function POST(request: NextRequest) {
             errorMessage.includes('required') ||
             errorMessage.includes('invalid') ||
             error.name === 'ValidationError';
-        
+
         // Extract specific validation error details
         let validationDetails = errorMessage;
         if (error.errors && typeof error.errors === 'object') {
