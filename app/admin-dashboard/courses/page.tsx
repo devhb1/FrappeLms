@@ -92,12 +92,20 @@ export default function CourseManagementPage() {
         e.preventDefault();
 
         try {
+            // Filter empty features and ensure at least one valid feature exists
+            const validFeatures = newCourse.features.filter(f => f.trim());
+
+            if (validFeatures.length === 0) {
+                toast.error('Please add at least one course feature');
+                return;
+            }
+
             const response = await fetch('/api/admin/courses', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     ...newCourse,
-                    features: newCourse.features.filter(f => f.trim())
+                    features: validFeatures
                 })
             });
 
@@ -119,7 +127,7 @@ export default function CourseManagementPage() {
                 });
                 await fetchCourses();
             } else {
-                toast.error(`Failed to create course: ${result.details}`);
+                toast.error(`Failed to create course: ${result.error || result.details || 'Unknown error'}`);
             }
         } catch (error) {
             toast.error('Failed to create course');
@@ -181,12 +189,20 @@ export default function CourseManagementPage() {
         if (!editingCourse) return;
 
         try {
+            // Filter empty features and ensure at least one valid feature exists
+            const validFeatures = editCourse.features.filter(f => f.trim());
+
+            if (validFeatures.length === 0) {
+                toast.error('Please add at least one course feature');
+                return;
+            }
+
             const response = await fetch(`/api/admin/courses/${encodeURIComponent(editingCourse.courseId)}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     ...editCourse,
-                    features: editCourse.features.filter(f => f.trim())
+                    features: validFeatures
                 })
             });
 
@@ -209,7 +225,7 @@ export default function CourseManagementPage() {
                 });
                 await fetchCourses();
             } else {
-                toast.error(`Failed to update course: ${result.details}`);
+                toast.error(`Failed to update course: ${result.error || result.details || 'Unknown error'}`);
             }
         } catch (error) {
             toast.error('Failed to update course');

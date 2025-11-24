@@ -180,11 +180,17 @@ export async function POST(request: NextRequest) {
     } catch (error) {
         console.error('Course creation error:', error);
 
+        // Check if it's a validation error
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        const isValidationError = errorMessage.includes('Validation failed') ||
+            errorMessage.includes('required') ||
+            errorMessage.includes('invalid');
+
         return NextResponse.json({
             success: false,
-            error: 'Failed to create course',
-            details: error instanceof Error ? error.message : 'Unknown error'
-        }, { status: 500 });
+            error: isValidationError ? errorMessage : 'Failed to create course',
+            details: errorMessage
+        }, { status: isValidationError ? 400 : 500 });
     }
 }
 
