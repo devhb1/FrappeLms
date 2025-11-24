@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import { useRouter, useSearchParams } from "next/navigation"
 import { SiteHeader } from "@/components/site-header"
 import { SiteFooter } from "@/components/site-footer"
 import { Button } from "@/components/ui/button"
@@ -26,10 +27,33 @@ import {
 import type { PublicCourse } from '@/lib/types/course';
 
 export default function CoursesPage() {
+  const router = useRouter()
+  const searchParams = useSearchParams()
   const [courses, setCourses] = useState<PublicCourse[]>([])
   const [loading, setLoading] = useState(true)
   const [sortBy, setSortBy] = useState('custom')
   const { toast } = useToast()
+
+  // Handle redirect if courseid parameter is present
+  useEffect(() => {
+    const courseId = searchParams.get('courseid')
+    if (courseId) {
+      // Build the redirect URL with all query params preserved
+      const params = new URLSearchParams()
+
+      // Copy over usermail and ref params
+      const usermail = searchParams.get('usermail')
+      const ref = searchParams.get('ref')
+
+      if (usermail) params.set('usermail', usermail)
+      if (ref) params.set('ref', ref)
+
+      // Redirect to course detail page
+      const redirectUrl = `/courses/${encodeURIComponent(courseId)}${params.toString() ? '?' + params.toString() : ''}`
+      console.log(`🔄 Redirecting to course detail: ${redirectUrl}`)
+      router.push(redirectUrl)
+    }
+  }, [searchParams, router])
 
   // Fetch courses from database
   useEffect(() => {
