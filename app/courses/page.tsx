@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, Suspense } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { SiteHeader } from "@/components/site-header"
 import { SiteFooter } from "@/components/site-footer"
@@ -26,7 +26,7 @@ import {
 
 import type { PublicCourse } from '@/lib/types/course';
 
-export default function CoursesPage() {
+function CoursesPageContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const [courses, setCourses] = useState<PublicCourse[]>([])
@@ -323,5 +323,27 @@ export default function CoursesPage() {
 
       <SiteFooter />
     </div>
+  )
+}
+
+// Wrap with Suspense to handle useSearchParams in Next.js 15
+export default function CoursesPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-background">
+        <SiteHeader />
+        <div className="container mx-auto px-4 py-20">
+          <div className="flex items-center justify-center min-h-[400px]">
+            <div className="text-center">
+              <Loader2 className="w-8 h-8 animate-spin mx-auto mb-4" />
+              <p className="text-gray-600 dark:text-gray-300">Loading courses...</p>
+            </div>
+          </div>
+        </div>
+        <SiteFooter />
+      </div>
+    }>
+      <CoursesPageContent />
+    </Suspense>
   )
 }
