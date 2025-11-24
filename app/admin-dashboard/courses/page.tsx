@@ -107,6 +107,7 @@ export default function CourseManagementPage() {
                 toast.success('Course created successfully!');
                 setShowCreateForm(false);
                 setNewCourse({
+                    courseId: '',
                     title: '',
                     description: '',
                     price: 0,
