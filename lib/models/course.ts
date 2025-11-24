@@ -94,7 +94,17 @@ const courseSchema: Schema<ICourse> = new mongoose.Schema({
         required: [true, 'Course ID is required'],
         unique: true,
         trim: true,
-        match: [/^[a-zA-Z0-9-_:+.%]+$/, 'Course ID must contain letters, numbers, hyphens, underscores, colons, plus signs, dots, and percent signs']
+        lowercase: true,
+        validate: {
+            validator: function(value: string) {
+                // Accept letters, numbers, hyphens, underscores, colons, plus, dots, percent, and forward slashes
+                // This matches Open edX course ID format: course-v1:Org+Course+Run
+                return /^[a-zA-Z0-9-_:+.%\/]+$/.test(value);
+            },
+            message: 'Course ID can only contain letters, numbers, and the following characters: - _ : + . % /'
+        },
+        minlength: [3, 'Course ID must be at least 3 characters'],
+        maxlength: [100, 'Course ID cannot exceed 100 characters']
     },
 
     // ===== MARKETING CONTENT =====

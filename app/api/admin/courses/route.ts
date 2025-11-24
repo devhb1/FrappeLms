@@ -27,16 +27,45 @@ import { RedisCache } from '@/lib/redis';
 // ===============================
 
 /**
+ * Sanitize and validate courseId format to match LMS standards
+ */
+function sanitizeCourseId(courseId: string): string {
+    if (!courseId || typeof courseId !== 'string') {
+        throw new Error('Course ID must be a non-empty string');
+    }
+
+    // Trim whitespace and convert to lowercase
+    let sanitized = courseId.trim().toLowerCase();
+    
+    // Replace spaces with hyphens
+    sanitized = sanitized.replace(/\s+/g, '-');
+    
+    // Remove any characters that aren't allowed (keep: letters, numbers, - _ : + . % /)
+    sanitized = sanitized.replace(/[^a-z0-9-_:+.%\/]/g, '');
+    
+    // Remove consecutive hyphens
+    sanitized = sanitized.replace(/-+/g, '-');
+    
+    // Remove leading/trailing hyphens
+    sanitized = sanitized.replace(/^-+|-+$/g, '');
+    
+    if (sanitized.length < 3 || sanitized.length > 100) {
+        throw new Error('Course ID must be between 3 and 100 characters');
+    }
+    
+    return sanitized;
+}
+
+/**
  * Validate courseId format to match LMS standards
  */
 function validateCourseId(courseId: string): boolean {
-    // Allow flexible courseId format to match your LMS
-    // Common formats: course-v1:ORG+COURSE+RUN or simple course identifiers
-    if (!courseId || typeof courseId !== 'string') return false;
-
-    // Basic validation: should be non-empty, reasonable length
-    const trimmed = courseId.trim();
-    return trimmed.length >= 3 && trimmed.length <= 100;
+    try {
+        const sanitized = sanitizeCourseId(courseId);
+        return sanitized.length >= 3 && sanitized.length <= 100;
+    } catch {
+        return false;
+    }
 }
 
 /**
@@ -78,7 +107,7 @@ function validateCourseData(data: any) {
 
     // Sanitize and return clean data
     return {
-        courseId: data.courseId.trim(),
+        courseId: sanitizeCourseId(data.courseId),
         title: data.title.trim(),
         description: data.description.trim(),
         price: Number(data.price),
@@ -177,18 +206,36 @@ export async function POST(request: NextRequest) {
             message: `Course created successfully${savedCourse.status === 'published' ? ' and is now visible on /courses' : ' as draft (not visible to public)'}`
         }, { status: 201 });
 
-    } catch (error) {
+    } catch (error: any) {
         console.error('Course creation error:', error);
+        
+        // Enhanced error logging for debugging
+        if (error.errors) {
+            console.error('Mongoose validation errors:', JSON.stringify(error.errors, null, 2));
+        }
 
         // Check if it's a validation error
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
         const isValidationError = errorMessage.includes('Validation failed') ||
+            errorMessage.includes('validation') ||
             errorMessage.includes('required') ||
-            errorMessage.includes('invalid');
+            errorMessage.includes('invalid') ||
+            error.name === 'ValidationError';
+        
+        // Extract specific validation error details
+        let validationDetails = errorMessage;
+        if (error.errors && typeof error.errors === 'object') {
+            const fieldErrors = Object.entries(error.errors)
+                .map(([field, err]: [string, any]) => `${field}: ${err.message}`)
+                .join(', ');
+            if (fieldErrors) {
+                validationDetails = fieldErrors;
+            }
+        }
 
         return NextResponse.json({
             success: false,
-            error: isValidationError ? errorMessage : 'Failed to create course',
+            error: isValidationError ? validationDetails : 'Failed to create course',
             details: errorMessage
         }, { status: isValidationError ? 400 : 500 });
     }

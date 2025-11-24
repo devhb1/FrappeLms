@@ -180,9 +180,10 @@ redis.on('connect', () => {
 });
 
 redis.on('error', (error) => {
-    // Only log Redis errors in production or when Redis URL is properly configured
-    if (process.env.NODE_ENV === 'production' || (process.env.REDIS_URL?.includes('upstash') && !error.message.includes('ENOTFOUND'))) {
-        console.error('❌ Redis connection error:', error);
+    // Silently handle Redis errors - app works without cache
+    // Only log critical errors, not connection failures
+    if (process.env.NODE_ENV === 'production' && !error.message.includes('ENOTFOUND') && !error.message.includes('getaddrinfo')) {
+        console.warn('⚠️ Redis unavailable, continuing without cache');
     }
 });
 
