@@ -164,7 +164,7 @@ function SuccessContent() {
                         size="lg"
                         className="bg-orange-600 hover:bg-orange-700 text-white flex-1"
                       >
-                        <a href="http://139.59.229.250:8000" target="_blank" rel="noopener noreferrer">
+                        <a href="https://lms.maaledu.com/lms" target="_blank" rel="noopener noreferrer">
                           <ExternalLink className="w-4 h-4 mr-2" />
                           Access FrappeLMS Platform
                         </a>
@@ -176,10 +176,10 @@ function SuccessContent() {
                         size="lg"
                         className="flex-1"
                       >
-                        <Link href="/dashboard">
+                        <a href="https://lms.maaledu.com/lms" target="_blank" rel="noopener noreferrer">
                           <BookOpen className="w-4 h-4 mr-2" />
                           Go to Dashboard
-                        </Link>
+                        </a>
                       </Button>
                     </div>
 
