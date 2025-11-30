@@ -148,13 +148,27 @@ export async function POST(req: NextRequest) {
 
             console.log(`📝 Found existing enrollment: ${existingEnrollment._id}, Status: ${existingEnrollment.status}`);
 
-            // Enhanced idempotency check: verify this specific Stripe event hasn't been processed
-            const isEventProcessed = existingEnrollment.stripeEvents?.some(
-                (stripeEvent: any) => stripeEvent.eventId === event.id
+            // Atomic idempotency check: prevent race conditions by atomically checking and adding event
+            const updateResult = await Enrollment.findOneAndUpdate(
+                {
+                    _id: existingEnrollment._id,
+                    'stripeEvents.eventId': { $ne: event.id } // Only update if eventId not already present
+                },
+                {
+                    $addToSet: {
+                        stripeEvents: {
+                            eventId: event.id,
+                            eventType: event.type,
+                            processedAt: new Date(),
+                            status: 'processing'
+                        }
+                    }
+                },
+                { new: true }
             );
 
-            if (isEventProcessed) {
-                ProductionLogger.info('Webhook idempotency - Event already processed', {
+            if (!updateResult) {
+                ProductionLogger.warn('Webhook idempotency - Event already being processed or completed', {
                     eventId: event.id,
                     eventType: event.type,
                     enrollmentId: existingEnrollment._id,
@@ -162,37 +176,18 @@ export async function POST(req: NextRequest) {
                 });
                 return NextResponse.json({
                     success: true,
-                    message: 'Event already processed',
+                    message: 'Event already processed or processing',
                     eventId: event.id,
                     enrollmentId: existingEnrollment._id
                 });
             }
 
-            // Legacy check for backward compatibility
-            if (existingEnrollment.status === 'paid' && !isEventProcessed) {
-                console.log(`⚠️ Enrollment already marked as paid but event not tracked: ${existingEnrollment._id}`);
-                // Add this event to the tracking array for future idempotency
-                await Enrollment.findByIdAndUpdate(existingEnrollment._id, {
-                    $push: {
-                        stripeEvents: {
-                            eventId: event.id,
-                            eventType: event.type,
-                            processedAt: new Date(),
-                            status: 'processed'
-                        }
-                    }
-                });
-                return NextResponse.json({
-                    success: true,
-                    message: 'Payment already processed, event logged',
-                    eventId: event.id,
-                    enrollmentId: existingEnrollment._id
-                });
-            }
-
-            // Update the existing enrollment to "paid" status and record Stripe event
-            const updatedEnrollment = await Enrollment.findByIdAndUpdate(
-                metadata.enrollmentId,
+            // ATOMIC status + event update to prevent race condition
+            const updatedEnrollment = await Enrollment.findOneAndUpdate(
+                {
+                    _id: metadata.enrollmentId,
+                    status: { $ne: 'paid' } // Only if NOT already paid
+                },
                 {
                     $set: {
                         paymentId: session.payment_intent as string,
@@ -200,22 +195,23 @@ export async function POST(req: NextRequest) {
                         'verification.paymentVerified': true,
                         'frappeSync.syncStatus': 'pending',
                         updatedAt: new Date()
-                    },
-                    $push: {
-                        stripeEvents: {
-                            eventId: event.id,
-                            eventType: event.type,
-                            processedAt: new Date(),
-                            status: 'processed'
-                        }
                     }
                 },
                 { new: true } // Return updated document
             );
 
             if (!updatedEnrollment) {
-                console.error(`❌ Failed to update enrollment: ${metadata.enrollmentId}`);
-                return NextResponse.json({ error: 'Failed to update enrollment' }, { status: 500 });
+                console.log(`⚠️ Enrollment already marked as paid or not found: ${metadata.enrollmentId}`);
+                ProductionLogger.warn('Webhook rejected - enrollment already paid', {
+                    enrollmentId: metadata.enrollmentId,
+                    eventId: event.id
+                });
+                return NextResponse.json({
+                    success: true,
+                    message: 'Payment already processed',
+                    eventId: event.id,
+                    enrollmentId: metadata.enrollmentId
+                });
             }
 
             console.log(`✅ Enrollment updated: ${updatedEnrollment._id}`);
@@ -311,8 +307,29 @@ export async function POST(req: NextRequest) {
                         enrollmentId: updatedEnrollment._id,
                         frappeEnrollmentId: updatedEnrollment.frappeSync.enrollmentId
                     });
+
+                    // Mark event as processed even though we skipped Frappe
+                    await Enrollment.findOneAndUpdate(
+                        { _id: updatedEnrollment._id },
+                        {
+                            $set: {
+                                'stripeEvents.$[elem].status': 'processed',
+                                'stripeEvents.$[elem].skippedReason': 'already_enrolled_in_frappe'
+                            }
+                        },
+                        {
+                            arrayFilters: [{ 'elem.eventId': event.id }]
+                        }
+                    );
                 } else {
                     const { enrollInFrappeLMS } = await import('@/lib/services/frappeLMS');
+
+                    ProductionLogger.info('Attempting Frappe LMS enrollment', {
+                        enrollmentId: updatedEnrollment._id,
+                        customerEmail,
+                        courseId: metadata.courseId,
+                        amount: updatedEnrollment.amount
+                    });
 
                     const frappeResult = await enrollInFrappeLMS({
                         user_email: customerEmail,
@@ -326,57 +343,126 @@ export async function POST(req: NextRequest) {
                         original_amount: updatedEnrollment.originalAmount,
                         discount_percentage: updatedEnrollment.grantData?.discountPercentage,
                         grant_id: updatedEnrollment.grantData?.grantId?.toString()
-                    }); if (frappeResult.success) {
-                        // Update enrollment with FrappeLMS data
-                        await Enrollment.findByIdAndUpdate(updatedEnrollment._id, {
-                            $set: {
-                                'frappeSync.synced': true,
-                                'frappeSync.syncStatus': 'success',
-                                'frappeSync.enrollmentId': frappeResult.enrollment_id,
-                                'frappeSync.syncCompletedAt': new Date(),
-                                'frappeSync.lastSyncAttempt': new Date()
+                    });
+
+                    if (frappeResult.success) {
+                        // Update enrollment with FrappeLMS data and mark webhook event as processed
+                        await Enrollment.findOneAndUpdate(
+                            { _id: updatedEnrollment._id },
+                            {
+                                $set: {
+                                    'frappeSync.synced': true,
+                                    'frappeSync.syncStatus': 'success',
+                                    'frappeSync.enrollmentId': frappeResult.enrollment_id,
+                                    'frappeSync.syncCompletedAt': new Date(),
+                                    'frappeSync.lastSyncAttempt': new Date(),
+                                    'frappeSync.retryCount': 0,
+                                    'stripeEvents.$[elem].status': 'processed'
+                                }
+                            },
+                            {
+                                arrayFilters: [{ 'elem.eventId': event.id }]
                             }
-                        });
+                        );
 
                         ProductionLogger.info('FrappeLMS enrollment successful', {
                             enrollmentId: updatedEnrollment._id,
                             frappeEnrollmentId: frappeResult.enrollment_id,
                             customerEmail
                         });
+                        console.log(`✅ FrappeLMS enrollment completed: ${frappeResult.enrollment_id}`);
                     } else {
-                        // Queue for retry instead of marking as failed
-                        const retryJob = await RetryJob.create({
-                            jobType: 'frappe_enrollment',
-                            enrollmentId: updatedEnrollment._id,
-                            payload: {
-                                user_email: customerEmail,
-                                course_id: metadata.courseId,
-                                paid_status: true,
-                                payment_id: updatedEnrollment.paymentId,
-                                amount: updatedEnrollment.amount,
-                                currency: 'USD',
-                                referral_code: affiliateEmail || undefined,
-                                enrollmentType: updatedEnrollment.enrollmentType || 'paid_stripe',
-                                originalRequestId: metadata.requestId
-                            },
-                            nextRetryAt: new Date(Date.now() + 2 * 60 * 1000) // Retry in 2 minutes
+                        // IMMEDIATE RETRY before queuing
+                        ProductionLogger.warn('First Frappe attempt failed, retrying immediately...', {
+                            error: frappeResult.error,
+                            enrollmentId: updatedEnrollment._id
                         });
 
-                        // Mark enrollment as queued for retry
-                        await Enrollment.findByIdAndUpdate(updatedEnrollment._id, {
-                            $set: {
-                                'frappeSync.synced': false,
-                                'frappeSync.syncStatus': 'retrying',
-                                'frappeSync.errorMessage': frappeResult.error,
-                                'frappeSync.lastSyncAttempt': new Date(),
-                                'frappeSync.retryJobId': retryJob._id
-                            }
-                        }); ProductionLogger.warn('FrappeLMS enrollment failed, queued for retry', {
-                            enrollmentId: updatedEnrollment._id,
-                            retryJobId: retryJob._id,
-                            error: frappeResult.error,
-                            nextRetryAt: retryJob.nextRetryAt
+                        await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds
+
+                        const retryResult = await enrollInFrappeLMS({
+                            user_email: customerEmail,
+                            course_id: metadata.courseId,
+                            paid_status: true,
+                            payment_id: updatedEnrollment.paymentId,
+                            amount: updatedEnrollment.amount,
+                            currency: 'USD',
+                            referral_code: affiliateEmail || undefined,
+                            original_amount: updatedEnrollment.originalAmount,
+                            discount_percentage: updatedEnrollment.grantData?.discountPercentage,
+                            grant_id: updatedEnrollment.grantData?.grantId?.toString()
                         });
+
+                        if (retryResult.success) {
+                            await Enrollment.findOneAndUpdate(
+                                { _id: updatedEnrollment._id },
+                                {
+                                    $set: {
+                                        'frappeSync.synced': true,
+                                        'frappeSync.syncStatus': 'success',
+                                        'frappeSync.enrollmentId': retryResult.enrollment_id,
+                                        'frappeSync.syncCompletedAt': new Date(),
+                                        'frappeSync.lastSyncAttempt': new Date(),
+                                        'frappeSync.retryCount': 1,
+                                        'stripeEvents.$[elem].status': 'processed'
+                                    }
+                                },
+                                {
+                                    arrayFilters: [{ 'elem.eventId': event.id }]
+                                }
+                            );
+                            ProductionLogger.info('FrappeLMS enrollment successful on immediate retry', {
+                                enrollmentId: updatedEnrollment._id,
+                                frappeEnrollmentId: retryResult.enrollment_id
+                            });
+                            console.log(`✅ FrappeLMS enrollment completed on retry: ${retryResult.enrollment_id}`);
+                        } else {
+                            // Queue for later retry
+                            ProductionLogger.error('Immediate retry failed, queuing for later', {
+                                error: retryResult.error,
+                                enrollmentId: updatedEnrollment._id
+                            });
+
+                            const retryJob = await RetryJob.create({
+                                jobType: 'frappe_enrollment',
+                                enrollmentId: updatedEnrollment._id,
+                                payload: {
+                                    user_email: customerEmail,
+                                    course_id: metadata.courseId,
+                                    paid_status: true,
+                                    payment_id: updatedEnrollment.paymentId,
+                                    amount: updatedEnrollment.amount,
+                                    currency: 'USD',
+                                    referral_code: affiliateEmail || undefined,
+                                    original_amount: updatedEnrollment.originalAmount,
+                                    discount_percentage: updatedEnrollment.grantData?.discountPercentage,
+                                    grant_id: updatedEnrollment.grantData?.grantId?.toString(),
+                                    enrollmentType: updatedEnrollment.enrollmentType || 'paid_stripe',
+                                    originalRequestId: metadata.requestId
+                                },
+                                nextRetryAt: new Date(Date.now() + 2 * 60 * 1000) // Retry in 2 minutes
+                            });
+
+                            // Mark enrollment as queued for retry
+                            await Enrollment.findByIdAndUpdate(updatedEnrollment._id, {
+                                $set: {
+                                    'frappeSync.synced': false,
+                                    'frappeSync.syncStatus': 'retrying',
+                                    'frappeSync.errorMessage': retryResult.error,
+                                    'frappeSync.lastSyncAttempt': new Date(),
+                                    'frappeSync.retryJobId': retryJob._id,
+                                    'frappeSync.retryCount': 2
+                                }
+                            });
+
+                            ProductionLogger.warn('FrappeLMS enrollment failed after immediate retry, queued for later', {
+                                enrollmentId: updatedEnrollment._id,
+                                retryJobId: retryJob._id,
+                                error: retryResult.error,
+                                nextRetryAt: retryJob.nextRetryAt
+                            });
+                            console.log(`⚠️ FrappeLMS enrollment queued for retry: ${retryJob._id}`);
+                        }
                     }
                 }
             } catch (frappeError) {
@@ -398,7 +484,8 @@ export async function POST(req: NextRequest) {
                             enrollmentType: updatedEnrollment.enrollmentType || 'paid_stripe',
                             originalRequestId: metadata.requestId
                         },
-                        nextRetryAt: new Date(Date.now() + 2 * 60 * 1000) // Retry in 2 minutes
+                        nextRetryAt: new Date(Date.now() + 2 * 60 * 1000), // Retry in 2 minutes
+                        maxAttempts: 5 // Explicit retry limit
                     });
 
                     await Enrollment.findByIdAndUpdate(updatedEnrollment._id, {

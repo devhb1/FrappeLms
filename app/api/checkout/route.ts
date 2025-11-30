@@ -507,27 +507,111 @@ async function processCouponEnrollment(data: any) {
         });
 
         if (frappeResult.success) {
-            if (frappeResult.success) {
+            await Enrollment.findByIdAndUpdate(savedEnrollment._id, {
+                $set: {
+                    'frappeSync.synced': true,
+                    'frappeSync.syncStatus': 'success',
+                    'frappeSync.enrollmentId': frappeResult.enrollment_id,
+                    'frappeSync.syncCompletedAt': new Date(),
+                    'frappeSync.lastSyncAttempt': new Date(),
+                    'frappeSync.retryCount': 0
+                }
+            });
+            ProductionLogger.info('FrappeLMS enrollment successful (free)', {
+                enrollmentId: frappeResult.enrollment_id
+            });
+        } else {
+            // Queue for background retry instead of blocking user
+            ProductionLogger.warn('First Frappe attempt failed, queuing for immediate background retry...', {
+                error: frappeResult.error
+            });
+
+            const { RetryJob } = await import('@/lib/models/retry-job');
+            const retryJob = await RetryJob.create({
+                user_email: email.toLowerCase(),
+                course_id: courseId,
+                paid_status: true,
+                payment_id: savedEnrollment.paymentId,
+                amount: 0,
+                currency: 'USD',
+                referral_code: data.affiliateEmail || undefined,
+                original_amount: course.price || 0,
+                discount_percentage: discountPercentage,
+                grant_id: reservedGrant._id.toString(),
+                enrollment_type: 'free_grant'
+            });
+
+            if (retryResult.success) {
                 await Enrollment.findByIdAndUpdate(savedEnrollment._id, {
                     $set: {
                         'frappeSync.synced': true,
                         'frappeSync.syncStatus': 'success',
-                        'frappeSync.enrollmentId': frappeResult.enrollment_id,
+                        'frappeSync.enrollmentId': retryResult.enrollment_id,
                         'frappeSync.syncCompletedAt': new Date(),
-                        'frappeSync.lastSyncAttempt': new Date()
+                        'frappeSync.retryCount': 1
                     }
                 });
-                ProductionLogger.info('FrappeLMS enrollment successful (free)', {
-                    enrollmentId: frappeResult.enrollment_id
+                ProductionLogger.info('FrappeLMS enrollment successful on retry', {
+                    enrollmentId: retryResult.enrollment_id
                 });
             } else {
-                // IMMEDIATE RETRY before giving up
-                ProductionLogger.warn('First Frappe attempt failed, retrying immediately...', {
-                    error: frappeResult.error
+                // Both immediate attempts failed - queue for background retry instead of rollback
+                const { RetryJob } = await import('@/lib/models/retry-job');
+                const retryJob = await RetryJob.create({
+                    jobType: 'frappe_enrollment',
+                    enrollmentId: savedEnrollment._id,
+                    payload: {
+                        user_email: email.toLowerCase(),
+                        course_id: courseId,
+                        paid_status: true,
+                        payment_id: savedEnrollment.paymentId,
+                        amount: 0,
+                        currency: 'USD',
+                        referral_code: data.affiliateEmail || undefined,
+                        original_amount: course.price || 0,
+                        discount_percentage: discountPercentage,
+                        grant_id: reservedGrant._id.toString(),
+                        enrollment_type: 'free_grant'
+                    },
+                    nextRetryAt: new Date(Date.now() + 2 * 60 * 1000)
                 });
 
-                await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second
-                const retryResult = await enrollInFrappeLMS({
+                await Enrollment.findByIdAndUpdate(savedEnrollment._id, {
+                    $set: {
+                        'frappeSync.synced': false,
+                        'frappeSync.syncStatus': 'retrying',
+                        'frappeSync.errorMessage': retryResult.error,
+                        'frappeSync.retryCount': 2,
+                        'frappeSync.lastSyncAttempt': new Date(),
+                        'frappeSync.retryJobId': retryJob._id
+                    }
+                });
+
+                ProductionLogger.warn('FrappeLMS enrollment failed after immediate retry, queued for background', {
+                    error: retryResult.error,
+                    grantId: reservedGrant._id,
+                    retryJobId: retryJob._id,
+                    enrollmentId: savedEnrollment._id
+                });
+
+                // Don't fail the enrollment - user will get access via background retry
+                // Course is already marked as paid in MongoDB
+            }
+        }
+    } catch (frappeError) {
+        ProductionLogger.error('FrappeLMS error (free enrollment)', {
+            error: frappeError instanceof Error ? frappeError.message : 'Unknown error',
+            stack: frappeError instanceof Error ? frappeError.stack : undefined,
+            enrollmentId: savedEnrollment._id
+        });
+
+        // Queue for background retry on exception
+        try {
+            const { RetryJob } = await import('@/lib/models/retry-job');
+            const retryJob = await RetryJob.create({
+                jobType: 'frappe_enrollment',
+                enrollmentId: savedEnrollment._id,
+                payload: {
                     user_email: email.toLowerCase(),
                     course_id: courseId,
                     paid_status: true,
@@ -539,75 +623,31 @@ async function processCouponEnrollment(data: any) {
                     discount_percentage: discountPercentage,
                     grant_id: reservedGrant._id.toString(),
                     enrollment_type: 'free_grant'
-                });
-
-                if (retryResult.success) {
-                    await Enrollment.findByIdAndUpdate(savedEnrollment._id, {
-                        $set: {
-                            'frappeSync.synced': true,
-                            'frappeSync.syncStatus': 'success',
-                            'frappeSync.enrollmentId': retryResult.enrollment_id,
-                            'frappeSync.syncCompletedAt': new Date(),
-                            'frappeSync.retryCount': 1
-                        }
-                    });
-                    ProductionLogger.info('FrappeLMS enrollment successful on retry', {
-                        enrollmentId: retryResult.enrollment_id
-                    });
-                } else {
-                    // ROLLBACK: Both attempts failed
-                    await Enrollment.findByIdAndUpdate(savedEnrollment._id, {
-                        $set: {
-                            status: 'failed',
-                            'frappeSync.synced': false,
-                            'frappeSync.syncStatus': 'failed',
-                            'frappeSync.errorMessage': retryResult.error,
-                            'frappeSync.retryCount': 2
-                        }
-                    });                    // Rollback coupon reservation
-                    await Grant.findByIdAndUpdate(reservedGrant._id, {
-                        $unset: {
-                            couponUsed: 1,
-                            couponUsedAt: 1,
-                            couponUsedBy: 1,
-                            reservedAt: 1
-                        }
-                    });
-
-                    ProductionLogger.error('FrappeLMS enrollment failed after retry - rolled back', {
-                        error: retryResult.error,
-                        grantId: reservedGrant._id
-                    });
-
-                    return NextResponse.json({
-                        error: 'Unable to complete LMS enrollment. Please contact support.',
-                        code: 'LMS_ENROLLMENT_FAILED',
-                        supportEmail: 'support@devhb.com'
-                    }, { status: 500 });
-                }
-            }
-            ProductionLogger.info('FrappeLMS enrollment successful (free)', {
-                enrollmentId: frappeResult.enrollment_id
+                },
+                nextRetryAt: new Date(Date.now() + 2 * 60 * 1000)
             });
-        } else {
+
             await Enrollment.findByIdAndUpdate(savedEnrollment._id, {
                 $set: {
                     'frappeSync.synced': false,
-                    'frappeSync.syncStatus': 'failed',
-                    'frappeSync.errorMessage': frappeResult.error,
+                    'frappeSync.syncStatus': 'retrying',
+                    'frappeSync.errorMessage': frappeError instanceof Error ? frappeError.message : 'Exception during enrollment',
                     'frappeSync.lastSyncAttempt': new Date(),
-                    'frappeSync.retryCount': 1
+                    'frappeSync.retryJobId': retryJob._id
                 }
             });
-            ProductionLogger.error('FrappeLMS enrollment failed (free)', {
-                error: frappeResult.error
+
+            ProductionLogger.info('Queued failed free enrollment for retry', {
+                retryJobId: retryJob._id,
+                enrollmentId: savedEnrollment._id
             });
+        } catch (retryCreateError) {
+            ProductionLogger.error('Failed to queue retry job for free enrollment', {
+                error: retryCreateError instanceof Error ? retryCreateError.message : 'Unknown error',
+                enrollmentId: savedEnrollment._id
+            });
+            // Don't fail the free enrollment completely - user can use manual retry
         }
-    } catch (frappeError) {
-        ProductionLogger.error('FrappeLMS error (free enrollment)', {
-            error: frappeError instanceof Error ? frappeError.message : 'Unknown error'
-        });
-        // Don't fail the free enrollment - user got access to frontend
     }
     // ===== END FRAPPE LMS INTEGRATION =====
 
@@ -835,7 +875,45 @@ async function processPartialDiscountCheckout(data: any) {
         grantId: grant._id
     });
 
-    // 1. Find or create affiliate for commission tracking
+    // 1. ATOMIC COUPON RESERVATION - prevent duplicate usage
+    const reservedGrant = await Grant.findOneAndUpdate(
+        {
+            _id: grant._id,
+            status: 'approved',
+            couponUsed: false,
+            email: email.toLowerCase()
+        },
+        {
+            $set: {
+                couponUsed: true,
+                couponUsedAt: new Date(),
+                couponUsedBy: email.toLowerCase(),
+                reservedAt: new Date(),
+                reservationExpiresAt: new Date(Date.now() + 30 * 60 * 1000) // 30min for Stripe checkout
+            }
+        },
+        { new: true }
+    );
+
+    if (!reservedGrant) {
+        ProductionLogger.warn('Partial grant coupon already used or unavailable', {
+            grantId: grant._id,
+            email
+        });
+        return NextResponse.json({
+            error: 'This coupon has already been used or is no longer available',
+            code: 'COUPON_UNAVAILABLE',
+            retryable: false
+        }, { status: 400 });
+    }
+
+    ProductionLogger.info('Partial grant coupon atomically reserved', {
+        grantId: reservedGrant._id,
+        email,
+        expiresAt: reservedGrant.reservationExpiresAt
+    });
+
+    // 2. Find or create affiliate for commission tracking
     let affiliate = null;
     if (affiliateEmail && affiliateEmail !== '') {
         affiliate = await Affiliate.findOne({
@@ -868,8 +946,8 @@ async function processPartialDiscountCheckout(data: any) {
 
         // Enhanced grant data for partial discounts
         grantData: {
-            grantId: grant._id,
-            couponCode: grant.couponCode,
+            grantId: reservedGrant._id,
+            couponCode: reservedGrant.couponCode,
             grantVerified: true,
             discountPercentage: discountPercentage,
             originalPrice: originalPrice,
@@ -934,7 +1012,7 @@ async function processPartialDiscountCheckout(data: any) {
             enrollmentId: savedEnrollment._id.toString(),
             affiliateEmail: affiliate?.email || '',
             redirectSource: data.redirectSource,
-            grantId: grant._id.toString(),
+            grantId: reservedGrant._id.toString(),
             discountPercentage: discountPercentage.toString(),
             originalPrice: originalPrice.toString(),
             finalPrice: finalPrice.toString(),
@@ -967,7 +1045,7 @@ async function processPartialDiscountCheckout(data: any) {
             discountAmount: discountAmount
         },
         grant: {
-            couponCode: grant.couponCode,
+            couponCode: reservedGrant.couponCode,
             grantType: 'partial'
         }
     });

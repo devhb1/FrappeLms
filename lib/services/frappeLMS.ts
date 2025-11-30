@@ -17,7 +17,7 @@ import ProductionLogger from '@/lib/utils/production-logger';
 const FRAPPE_CONFIG = {
     baseUrl: process.env.FRAPPE_LMS_BASE_URL || 'https://lms.maaledu.com',
     apiKey: process.env.FRAPPE_LMS_API_KEY || '',
-    timeout: 10000 // 10 seconds (reduced from 30s for faster failure detection)
+    timeout: 5000 // 5 seconds for faster failure detection and better UX
 };
 
 // ===== TYPE DEFINITIONS =====
@@ -29,11 +29,12 @@ export interface FrappeEnrollmentRequest {
     user_email: string;
     course_id: string;
     paid_status: boolean;
-    payment_id?: string;
-    amount?: number;
-    currency?: string;
+    payment_id: string;
+    amount: number;
+    currency: string;
     referral_code?: string;
-    // Grant metadata fields
+
+    // Optional grant metadata
     original_amount?: number;
     discount_percentage?: number;
     grant_id?: string;
@@ -41,15 +42,65 @@ export interface FrappeEnrollmentRequest {
 }
 
 /**
- * FrappeLMS Enrollment Response
+ * FrappeLMS API Response
  */
 export interface FrappeEnrollmentResponse {
     success: boolean;
-    message?: string;
     enrollment_id?: string;
-    user_email?: string;
-    course_id?: string;
     error?: string;
+}
+
+/**
+ * Validates email format for FrappeLMS compatibility
+ * RFC 5322 compliant email validation
+ */
+function validateEmail(email: string): { valid: boolean; error?: string } {
+    if (!email || typeof email !== 'string') {
+        return { valid: false, error: 'Email is required' };
+    }
+
+    const trimmed = email.trim().toLowerCase();
+    if (trimmed.length === 0) {
+        return { valid: false, error: 'Email cannot be empty' };
+    }
+
+    // RFC 5322 compliant email regex (simplified but comprehensive)
+    const emailPattern = /^[a-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[a-z0-9!#$%&'*+/=?^_`{|}~-]+)*@(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
+
+    if (!emailPattern.test(trimmed)) {
+        return {
+            valid: false,
+            error: `Invalid email format: "${email}". Please provide a valid email address.`
+        };
+    }
+
+    return { valid: true };
+}
+
+/**
+ * Validates course ID format for FrappeLMS compatibility
+ * Expected format: lowercase-with-hyphens (e.g., 'full-stack-bootcamp')
+ */
+function validateCourseId(courseId: string): { valid: boolean; error?: string } {
+    if (!courseId || typeof courseId !== 'string') {
+        return { valid: false, error: 'Course ID is required' };
+    }
+
+    const trimmed = courseId.trim();
+    if (trimmed.length === 0) {
+        return { valid: false, error: 'Course ID cannot be empty' };
+    }
+
+    // Check for valid URL slug format (lowercase, hyphens, numbers allowed)
+    const validPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+    if (!validPattern.test(trimmed)) {
+        return {
+            valid: false,
+            error: `Invalid course ID format: "${trimmed}". Expected lowercase-with-hyphens format (e.g., 'blockchain-revolution')`
+        };
+    }
+
+    return { valid: true };
 }
 
 /**
@@ -86,7 +137,9 @@ export async function enrollInFrappeLMS(
             email: data.user_email,
             courseId: data.course_id,
             paidStatus: data.paid_status,
-            amount: data.amount
+            amount: data.amount,
+            baseUrl: FRAPPE_CONFIG.baseUrl,
+            hasApiKey: !!FRAPPE_CONFIG.apiKey
         });
 
         // Validate required fields
@@ -94,25 +147,76 @@ export async function enrollInFrappeLMS(
             throw new Error('Missing required fields: user_email or course_id');
         }
 
-        const response = await fetch(
-            `${FRAPPE_CONFIG.baseUrl}/api/method/lms.lms.payment_confirmation.confirm_payment`,
-            {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    ...(FRAPPE_CONFIG.apiKey && { 'Authorization': `Bearer ${FRAPPE_CONFIG.apiKey}` })
-                },
-                body: JSON.stringify(data),
-                signal: AbortSignal.timeout(FRAPPE_CONFIG.timeout)
+        // Validate email format before making API call
+        const emailValidation = validateEmail(data.user_email);
+        if (!emailValidation.valid) {
+            ProductionLogger.error('Email validation failed', {
+                email: data.user_email,
+                error: emailValidation.error
+            });
+            throw new Error(emailValidation.error);
+        }
+
+        // Validate course ID format before making API call
+        const courseValidation = validateCourseId(data.course_id);
+        if (!courseValidation.valid) {
+            ProductionLogger.error('Course ID validation failed', {
+                courseId: data.course_id,
+                error: courseValidation.error
+            });
+            throw new Error(courseValidation.error);
+        }
+
+        // Validate base URL
+        if (!FRAPPE_CONFIG.baseUrl || FRAPPE_CONFIG.baseUrl === '') {
+            throw new Error('FRAPPE_LMS_BASE_URL is not configured');
+        }
+
+        const enrollmentUrl = `${FRAPPE_CONFIG.baseUrl}/api/method/lms.lms.payment_confirmation.confirm_payment`;
+        ProductionLogger.info('Making Frappe LMS API call', {
+            url: enrollmentUrl,
+            payload: {
+                user_email: data.user_email,
+                course_id: data.course_id,
+                paid_status: data.paid_status,
+                payment_id: data.payment_id,
+                amount: data.amount,
+                currency: data.currency
             }
-        );
+        });
+
+        const response = await fetch(enrollmentUrl, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                ...(FRAPPE_CONFIG.apiKey && { 'Authorization': `Bearer ${FRAPPE_CONFIG.apiKey}` })
+            },
+            body: JSON.stringify(data),
+            signal: AbortSignal.timeout(FRAPPE_CONFIG.timeout)
+        });
+
+        ProductionLogger.info('Frappe LMS API response received', {
+            status: response.status,
+            statusText: response.statusText,
+            ok: response.ok
+        });
 
         if (!response.ok) {
             const errorText = await response.text();
+            ProductionLogger.error('Frappe LMS API error response', {
+                status: response.status,
+                statusText: response.statusText,
+                errorBody: errorText
+            });
             throw new Error(`FrappeLMS API returned ${response.status}: ${response.statusText}. Details: ${errorText}`);
         }
 
         const result = await response.json();
+        ProductionLogger.info('Frappe LMS API JSON response', {
+            hasMessage: !!result.message,
+            resultKeys: Object.keys(result),
+            fullResult: JSON.stringify(result)
+        });
 
         // FrappeLMS wraps response in 'message' field
         const enrollmentData = result.message || result;
@@ -121,13 +225,15 @@ export async function enrollInFrappeLMS(
             ProductionLogger.info('FrappeLMS enrollment successful', {
                 enrollmentId: enrollmentData.enrollment_id,
                 userEmail: enrollmentData.user_email,
-                courseId: enrollmentData.course_id
+                courseId: enrollmentData.course_id,
+                fullResponse: JSON.stringify(enrollmentData)
             });
         } else {
             ProductionLogger.error('FrappeLMS enrollment failed', {
                 error: enrollmentData.error,
                 userEmail: data.user_email,
-                courseId: data.course_id
+                courseId: data.course_id,
+                fullResponse: JSON.stringify(enrollmentData)
             });
         }
 
@@ -138,7 +244,9 @@ export async function enrollInFrappeLMS(
             error: error instanceof Error ? error.message : 'Unknown error',
             stack: error instanceof Error ? error.stack : undefined,
             userEmail: data.user_email,
-            courseId: data.course_id
+            courseId: data.course_id,
+            errorName: error instanceof Error ? error.name : 'Unknown',
+            errorType: typeof error
         });
 
         return {
