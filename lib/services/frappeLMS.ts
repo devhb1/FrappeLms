@@ -31,7 +31,7 @@ export interface FrappeEnrollmentRequest {
     paid_status: boolean;
     payment_id: string;
     amount: number;
-    currency: string;
+    currency?: string; // Optional, defaults to 'usd'
     referral_code?: string;
 
     // Optional grant metadata
@@ -181,9 +181,15 @@ export async function enrollInFrappeLMS(
                 paid_status: data.paid_status,
                 payment_id: data.payment_id,
                 amount: data.amount,
-                currency: data.currency
+                currency: data.currency || 'usd'
             }
         });
+
+        // Ensure currency has a default value for the API call
+        const requestPayload = {
+            ...data,
+            currency: data.currency || 'usd'
+        };
 
         const response = await fetch(enrollmentUrl, {
             method: 'POST',
@@ -191,7 +197,7 @@ export async function enrollInFrappeLMS(
                 'Content-Type': 'application/json',
                 ...(FRAPPE_CONFIG.apiKey && { 'Authorization': `Bearer ${FRAPPE_CONFIG.apiKey}` })
             },
-            body: JSON.stringify(data),
+            body: JSON.stringify(requestPayload),
             signal: AbortSignal.timeout(FRAPPE_CONFIG.timeout)
         });
 
