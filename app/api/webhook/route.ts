@@ -9,8 +9,8 @@ import { sendEmail } from '@/lib/emails';
 import ProductionLogger from '@/lib/utils/production-logger';
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-    // @ts-ignore - Vercel uses different Stripe API version than local  
-    apiVersion: '2025-08-27.basil',
+    // @ts-ignore - Stripe API version for compatibility
+    apiVersion: '2025-07-30.basil',
 });
 
 const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET!;

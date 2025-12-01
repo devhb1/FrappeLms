@@ -189,7 +189,7 @@ async function testFrappeIntegration() {
             logSuccess('Free enrollment successful!');
             console.log('  Enrollment Details:');
             console.log(`    Enrollment ID: ${freeEnrollment.enrollment_id}`);
-            console.log(`    User Email: ${freeEnrollment.user_email}`);
+            console.log(`    User Email: ${testEmailFree}`);
             console.log(`    Amount: $0.00 (Free)`);
             passedTests++;
         } else {
