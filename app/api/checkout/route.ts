@@ -521,82 +521,50 @@ async function processCouponEnrollment(data: any) {
                 enrollmentId: frappeResult.enrollment_id
             });
         } else {
-            // Queue for background retry instead of blocking user
+            // Queue for background retry instead of blocking user (improved UX)
             ProductionLogger.warn('First Frappe attempt failed, queuing for immediate background retry...', {
                 error: frappeResult.error
             });
 
             const { RetryJob } = await import('@/lib/models/retry-job');
             const retryJob = await RetryJob.create({
-                user_email: email.toLowerCase(),
-                course_id: courseId,
-                paid_status: true,
-                payment_id: savedEnrollment.paymentId,
-                amount: 0,
-                currency: 'USD',
-                referral_code: data.affiliateEmail || undefined,
-                original_amount: course.price || 0,
-                discount_percentage: discountPercentage,
-                grant_id: reservedGrant._id.toString(),
-                enrollment_type: 'free_grant'
+                jobType: 'frappe_enrollment',
+                enrollmentId: savedEnrollment._id,
+                payload: {
+                    user_email: email.toLowerCase(),
+                    course_id: courseId,
+                    paid_status: true,
+                    payment_id: savedEnrollment.paymentId,
+                    amount: 0,
+                    currency: 'USD',
+                    referral_code: data.affiliateEmail || undefined,
+                    original_amount: course.price || 0,
+                    discount_percentage: discountPercentage,
+                    grant_id: reservedGrant._id.toString(),
+                    enrollment_type: 'free_grant'
+                },
+                nextRetryAt: new Date(Date.now() + 5000), // Retry in 5 seconds
+                maxAttempts: 5 // Explicit retry limit
             });
 
-            if (retryResult.success) {
-                await Enrollment.findByIdAndUpdate(savedEnrollment._id, {
-                    $set: {
-                        'frappeSync.synced': true,
-                        'frappeSync.syncStatus': 'success',
-                        'frappeSync.enrollmentId': retryResult.enrollment_id,
-                        'frappeSync.syncCompletedAt': new Date(),
-                        'frappeSync.retryCount': 1
-                    }
-                });
-                ProductionLogger.info('FrappeLMS enrollment successful on retry', {
-                    enrollmentId: retryResult.enrollment_id
-                });
-            } else {
-                // Both immediate attempts failed - queue for background retry instead of rollback
-                const { RetryJob } = await import('@/lib/models/retry-job');
-                const retryJob = await RetryJob.create({
-                    jobType: 'frappe_enrollment',
-                    enrollmentId: savedEnrollment._id,
-                    payload: {
-                        user_email: email.toLowerCase(),
-                        course_id: courseId,
-                        paid_status: true,
-                        payment_id: savedEnrollment.paymentId,
-                        amount: 0,
-                        currency: 'USD',
-                        referral_code: data.affiliateEmail || undefined,
-                        original_amount: course.price || 0,
-                        discount_percentage: discountPercentage,
-                        grant_id: reservedGrant._id.toString(),
-                        enrollment_type: 'free_grant'
-                    },
-                    nextRetryAt: new Date(Date.now() + 2 * 60 * 1000)
-                });
+            await Enrollment.findByIdAndUpdate(savedEnrollment._id, {
+                $set: {
+                    'frappeSync.synced': false,
+                    'frappeSync.syncStatus': 'retrying',
+                    'frappeSync.errorMessage': frappeResult.error,
+                    'frappeSync.lastSyncAttempt': new Date(),
+                    'frappeSync.retryJobId': retryJob._id,
+                    'frappeSync.retryCount': 1
+                }
+            });
 
-                await Enrollment.findByIdAndUpdate(savedEnrollment._id, {
-                    $set: {
-                        'frappeSync.synced': false,
-                        'frappeSync.syncStatus': 'retrying',
-                        'frappeSync.errorMessage': retryResult.error,
-                        'frappeSync.retryCount': 2,
-                        'frappeSync.lastSyncAttempt': new Date(),
-                        'frappeSync.retryJobId': retryJob._id
-                    }
-                });
+            ProductionLogger.info('Free enrollment queued for background retry', {
+                retryJobId: retryJob._id,
+                enrollmentId: savedEnrollment._id,
+                nextRetryAt: retryJob.nextRetryAt
+            });
 
-                ProductionLogger.warn('FrappeLMS enrollment failed after immediate retry, queued for background', {
-                    error: retryResult.error,
-                    grantId: reservedGrant._id,
-                    retryJobId: retryJob._id,
-                    enrollmentId: savedEnrollment._id
-                });
-
-                // Don't fail the enrollment - user will get access via background retry
-                // Course is already marked as paid in MongoDB
-            }
+            // Don't block user - return success, background retry will complete enrollment
         }
     } catch (frappeError) {
         ProductionLogger.error('FrappeLMS error (free enrollment)', {
