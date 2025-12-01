@@ -124,8 +124,8 @@ async function testFrappeIntegration() {
             logSuccess('Enrollment successful!');
             console.log('  Enrollment Details:');
             console.log(`    Enrollment ID: ${enrollment.enrollment_id}`);
-            console.log(`    User Email: ${enrollment.user_email}`);
-            console.log(`    Course ID: ${enrollment.course_id}`);
+            console.log(`    User Email: ${testEmail}`);
+            console.log(`    Course ID: block-chain-basics`);
             passedTests++;
         } else {
             logError(`Enrollment failed: ${enrollment.error}`);
@@ -157,8 +157,8 @@ async function testFrappeIntegration() {
             logSuccess('Enrollment with referral successful!');
             console.log('  Enrollment Details:');
             console.log(`    Enrollment ID: ${enrollmentWithRef.enrollment_id}`);
-            console.log(`    User Email: ${enrollmentWithRef.user_email}`);
-            console.log(`    Course ID: ${enrollmentWithRef.course_id}`);
+            console.log(`    User Email: ${testEmailWithReferral}`);
+            console.log(`    Course ID: block-chain-basics`);
             passedTests++;
         } else {
             logError(`Enrollment with referral failed: ${enrollmentWithRef.error}`);
