@@ -90,11 +90,11 @@ export async function POST(req: NextRequest) {
             courseId: enrollment.courseId
         });
 
-        // 7. Queue Frappe LMS sync
-        await RetryJob.create({
-            jobType: 'frappe_enrollment',
-            enrollmentId: enrollment._id,
-            payload: {
+        // 7. Sync with Frappe LMS IMMEDIATELY (don't wait for cron)
+        const { enrollInFrappeLMS } = await import('@/lib/services/frappeLMS');
+
+        try {
+            const frappeResult = await enrollInFrappeLMS({
                 user_email: enrollment.email,
                 course_id: enrollment.courseId,
                 paid_status: true,
@@ -102,17 +102,55 @@ export async function POST(req: NextRequest) {
                 amount: enrollment.amount,
                 currency: enrollment.currency || 'usd',
                 referral_code: enrollment.affiliateData?.affiliateEmail,
-                enrollmentType: enrollment.enrollmentType,
-                originalRequestId: `complete-enrollment-${Date.now()}`
-            },
-            attempts: 0,
-            maxAttempts: 5,
-            status: 'pending',
-            nextRetryAt: new Date(),
-            createdAt: new Date()
-        });
+                enrollment_type: enrollment.enrollmentType
+            });
 
-        ProductionLogger.info('Frappe sync queued', { enrollmentId: enrollment._id });
+            if (frappeResult.success) {
+                // Update enrollment with Frappe success
+                enrollment.frappeSync = {
+                    synced: true,
+                    syncStatus: 'success',
+                    enrollmentId: frappeResult.enrollment_id,
+                    syncCompletedAt: new Date(),
+                    lastSyncAttempt: new Date()
+                };
+                await enrollment.save();
+
+                ProductionLogger.info('Frappe LMS enrollment completed immediately', {
+                    enrollmentId: enrollment._id,
+                    frappeEnrollmentId: frappeResult.enrollment_id
+                });
+            } else {
+                throw new Error(frappeResult.error || 'Frappe enrollment failed');
+            }
+        } catch (frappeError) {
+            // If immediate sync fails, queue for retry
+            ProductionLogger.warn('Immediate Frappe sync failed, queuing retry', {
+                enrollmentId: enrollment._id,
+                error: frappeError instanceof Error ? frappeError.message : 'Unknown error'
+            });
+
+            await RetryJob.create({
+                jobType: 'frappe_enrollment',
+                enrollmentId: enrollment._id,
+                payload: {
+                    user_email: enrollment.email,
+                    course_id: enrollment.courseId,
+                    paid_status: true,
+                    payment_id: enrollment.paymentId,
+                    amount: enrollment.amount,
+                    currency: enrollment.currency || 'usd',
+                    referral_code: enrollment.affiliateData?.affiliateEmail,
+                    enrollmentType: enrollment.enrollmentType,
+                    originalRequestId: `complete-enrollment-${Date.now()}`
+                },
+                attempts: 0,
+                maxAttempts: 5,
+                status: 'pending',
+                nextRetryAt: new Date(Date.now() + 5000), // Retry in 5 seconds
+                createdAt: new Date()
+            });
+        }
 
         return NextResponse.json({
             success: true,
