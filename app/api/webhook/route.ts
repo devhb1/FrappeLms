@@ -92,15 +92,41 @@ export async function GET() {
 
 // POST: Process Stripe payments and store clean enrollment data
 export async function POST(req: NextRequest) {
+    ProductionLogger.info('🎯 Webhook received', {
+        url: req.url,
+        method: req.method,
+        hasSignature: !!req.headers.get('stripe-signature')
+    });
+
     const body = await req.text();
     const sig = req.headers.get('stripe-signature') as string;
+
+    if (!sig) {
+        ProductionLogger.error('❌ Missing stripe-signature header');
+        return NextResponse.json({ error: 'Missing stripe-signature header' }, { status: 400 });
+    }
+
+    if (!endpointSecret) {
+        ProductionLogger.error('❌ STRIPE_WEBHOOK_SECRET not configured in environment');
+        return NextResponse.json({ error: 'Webhook secret not configured' }, { status: 500 });
+    }
 
     let event: Stripe.Event;
 
     try {
         event = stripe.webhooks.constructEvent(body, sig, endpointSecret);
+        ProductionLogger.info('✅ Webhook verified successfully', {
+            eventType: event.type,
+            eventId: event.id
+        });
         console.log('✅ Webhook verified:', event.type, 'ID:', event.id);
     } catch (err: any) {
+        ProductionLogger.error('❌ Webhook verification failed', {
+            error: err.message,
+            hasBody: !!body,
+            hasSignature: !!sig,
+            hasSecret: !!endpointSecret
+        });
         console.error('❌ Webhook verification failed:', err.message);
         return NextResponse.json({ error: `Webhook Error: ${err.message}` }, { status: 400 });
     }
