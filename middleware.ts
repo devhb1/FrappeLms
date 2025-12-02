@@ -35,6 +35,8 @@ export default withAuth(
                     if (pathname.startsWith("/api/enrollments") && req.method === "GET") return true;
                     // Allow checkout endpoints (for guest purchases)
                     if (pathname.startsWith("/api/checkout")) return true;
+                    // Allow complete-enrollment endpoint (fallback for webhook failures)
+                    if (pathname.startsWith("/api/complete-enrollment")) return true;
                     // Allow debug endpoints (for development)
                     if (pathname.startsWith("/api/debug-")) return true;
                     // Allow test enrollment endpoint (for development)
