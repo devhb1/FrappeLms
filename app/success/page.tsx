@@ -18,17 +18,47 @@ function SuccessContent() {
   const couponCode = searchParams.get('couponCode')
   const enrollmentId = searchParams.get('enrollmentId')
   const [isLoading, setIsLoading] = useState(true)
+  const [enrollmentStatus, setEnrollmentStatus] = useState<string>('')
 
   const isFreeEnrollment = enrollmentType === 'free_enrollment'
 
   useEffect(() => {
-    // Simulate processing time
-    const timer = setTimeout(() => {
-      setIsLoading(false)
-    }, 2000)
+    // For paid enrollments, complete the enrollment as fallback if webhook didn't fire
+    const completeEnrollment = async () => {
+      if (sessionId && !isFreeEnrollment) {
+        try {
+          setEnrollmentStatus('Verifying payment...')
+          const response = await fetch('/api/complete-enrollment', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sessionId })
+          })
 
-    return () => clearTimeout(timer)
-  }, [])
+          const data = await response.json()
+
+          if (data.success) {
+            setEnrollmentStatus('Enrollment completed! Setting up course access...')
+            console.log('✅ Enrollment completed via fallback', data)
+          } else {
+            console.warn('⚠️ Enrollment completion failed', data)
+            setEnrollmentStatus('Payment verified. Course access will be available shortly.')
+          }
+        } catch (error) {
+          console.error('❌ Failed to complete enrollment', error)
+          setEnrollmentStatus('Payment successful. Course access will be available shortly.')
+        }
+      }
+
+      // Simulate processing time
+      const timer = setTimeout(() => {
+        setIsLoading(false)
+      }, 3000) // Increased to 3s to allow fallback to complete
+
+      return () => clearTimeout(timer)
+    }
+
+    completeEnrollment()
+  }, [sessionId, isFreeEnrollment])
 
   if (isLoading) {
     return (
@@ -40,7 +70,7 @@ function SuccessContent() {
               Processing Your Enrollment...
             </h2>
             <p className="text-gray-600 dark:text-gray-300 text-center">
-              Please wait while we set up your course access.
+              {enrollmentStatus || 'Please wait while we set up your course access.'}
             </p>
           </CardContent>
         </Card>
