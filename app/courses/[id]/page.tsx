@@ -517,17 +517,18 @@ export default function CourseDetailPage() {
 
                 // Handle other specific errors
                 if (errorData.code === 'DUPLICATE_ENROLLMENT') {
-                    // For duplicate enrollment, show a positive message and redirect to dashboard
+                    // For duplicate enrollment, show a positive message and redirect to Frappe LMS
                     toast({
                         title: "Already Enrolled! 🎉",
-                        description: "Good news! You're already enrolled in this course. Redirecting to dashboard...",
+                        description: "Good news! You're already enrolled in this course. Redirecting to MaalEdu LMS...",
                         variant: "default"
                     });
 
                     setIsDialogOpen(false);
 
                     setTimeout(() => {
-                        router.push('/dashboard');
+                        // Redirect to Frappe LMS course page instead of dashboard (no auth required)
+                        window.location.href = `https://lms.maaledu.com/lms/courses/${course!.courseId}`;
                     }, 2000);
 
                     setIsLoading(false);
