@@ -18,12 +18,12 @@ import ProductionLogger from '@/lib/utils/production-logger';
 // Ensure URL always has protocol (https://)
 const ensureProtocol = (url: string): string => {
     if (!url) return 'https://lms.maaledu.com';
-    
+
     // If URL already has protocol, return as-is
     if (url.startsWith('http://') || url.startsWith('https://')) {
         return url;
     }
-    
+
     // If URL is missing protocol, add https://
     return `https://${url}`;
 };
