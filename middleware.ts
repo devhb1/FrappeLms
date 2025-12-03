@@ -37,6 +37,8 @@ export default withAuth(
                     if (pathname.startsWith("/api/checkout")) return true;
                     // Allow complete-enrollment endpoint (fallback for webhook failures)
                     if (pathname.startsWith("/api/complete-enrollment")) return true;
+                    // Allow manual-sync endpoint (for admin/debug)
+                    if (pathname.startsWith("/api/manual-sync")) return true;
                     // Allow debug endpoints (for development)
                     if (pathname.startsWith("/api/debug-")) return true;
                     // Allow test enrollment endpoint (for development)
