@@ -14,8 +14,22 @@ import ProductionLogger from '@/lib/utils/production-logger';
 
 // FrappeLMS Configuration
 // Production endpoint: https://lms.maaledu.com/api/method/lms.lms.payment_confirmation.confirm_payment
+
+// Ensure URL always has protocol (https://)
+const ensureProtocol = (url: string): string => {
+    if (!url) return 'https://lms.maaledu.com';
+    
+    // If URL already has protocol, return as-is
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+        return url;
+    }
+    
+    // If URL is missing protocol, add https://
+    return `https://${url}`;
+};
+
 const FRAPPE_CONFIG = {
-    baseUrl: process.env.FRAPPE_LMS_BASE_URL || 'https://lms.maaledu.com',
+    baseUrl: ensureProtocol(process.env.FRAPPE_LMS_BASE_URL || 'lms.maaledu.com'),
     apiKey: process.env.FRAPPE_LMS_API_KEY || '',
     timeout: 5000 // 5 seconds for faster failure detection and better UX
 };
