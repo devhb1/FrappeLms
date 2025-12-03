@@ -185,11 +185,36 @@ export async function enrollInFrappeLMS(
             }
         });
 
-        // Ensure currency has a default value for the API call
-        const requestPayload = {
-            ...data,
-            currency: data.currency || 'usd'
+        // Build clean payload with ONLY the fields Frappe LMS API expects
+        const requestPayload: {
+            user_email: string;
+            course_id: string;
+            paid_status: boolean;
+            payment_id?: string;
+            amount?: number;
+            currency?: string;
+            referral_code?: string;
+        } = {
+            user_email: data.user_email,
+            course_id: data.course_id,
+            paid_status: data.paid_status
         };
+
+        // Add optional fields only if provided
+        if (data.payment_id) requestPayload.payment_id = data.payment_id;
+        if (data.amount) requestPayload.amount = data.amount;
+        if (data.currency) requestPayload.currency = data.currency;
+        if (data.referral_code) requestPayload.referral_code = data.referral_code;
+
+        ProductionLogger.info('Clean Frappe payload constructed', {
+            payload: requestPayload,
+            extraFieldsIgnored: {
+                enrollment_type: data.enrollment_type,
+                original_amount: data.original_amount,
+                discount_percentage: data.discount_percentage,
+                grant_id: data.grant_id
+            }
+        });
 
         const response = await fetch(enrollmentUrl, {
             method: 'POST',
