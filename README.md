@@ -96,9 +96,7 @@ MONGODB_URI=mongodb+srv://username:password@cluster.mongodb.net/database
 # Application Configuration
 NEXT_PUBLIC_APP_URL=http://localhost:3000
 
-# Open edX Configuration (for future use)
-OPEN_EDX_BASE_URL=https://your-openedx-instance.com
-OPEN_EDX_API_TOKEN=your_openedx_api_token_here
+
 ```
 
 ### 4. Start Development Server
@@ -301,10 +299,7 @@ pnpm start
 - Check database user permissions
 - Ensure IP address is whitelisted in MongoDB Atlas
 
-**Build Errors**
-- Clear Next.js cache: `rm -rf .next`
-- Reinstall dependencies: `rm -rf node_modules && pnpm install`
-- Check TypeScript errors: `pnpm build`
+
 
 **Environment Variables Not Loading**
 - Ensure `.env.local` is in project root
@@ -333,9 +328,7 @@ pnpm start
 - [shadcn/ui Components](https://ui.shadcn.com/)
 - [Tailwind CSS](https://tailwindcss.com/docs)
 
-## � License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ## � Team
 
@@ -352,7 +345,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - ✅ TypeScript implementation with proper validation
 
 ### Phase 2 (Next)
-- 🔄 Open edX LMS integration
+- 🔄 Frappe LMS integration
 - 🔄 User authentication and profiles
 - 🔄 Course progress tracking
 - 🔄 Email notifications and receipts
@@ -367,3 +360,4 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ---
 
 For support, email: support@maaledu.com
+
