@@ -152,6 +152,7 @@ export async function POST(req: NextRequest) {
             };
 
             const customerEmail = (metadata.email || session.customer_details?.email || '').toLowerCase();
+            const customerName = customerEmail.split('@')[0]; // Extract name from email
 
             console.log(`💳 Processing payment for: ${customerEmail}`);
             console.log(`📋 Course: ${metadata.courseId}, Amount: $${session.amount_total ? session.amount_total / 100 : 0}`);
@@ -274,7 +275,6 @@ export async function POST(req: NextRequest) {
             // Send course purchase confirmation email
             try {
                 const course = await getCourseFromDb(metadata.courseId);
-                const customerName = customerEmail.split('@')[0]; // Extract name from email
                 const purchaseDate = new Date().toLocaleDateString('en-US', {
                     year: 'numeric',
                     month: 'long',
