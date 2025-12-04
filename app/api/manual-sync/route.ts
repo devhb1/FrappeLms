@@ -93,7 +93,7 @@ export async function POST(req: NextRequest) {
 
                 await sendEmail.coursePurchaseConfirmation(
                     enrollment.email,
-                    enrollment.lmsContext?.username || 'Student',
+                    enrollment.lmsContext?.frappeUsername || 'Student',
                     course?.title || enrollment.courseId,
                     enrollment.amount,
                     new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })

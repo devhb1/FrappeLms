@@ -3,6 +3,8 @@
  * MAIN CHECKOUT API - PRODUCTION READY
  * ===============================
  * 
+ * 
+ 
  * Clean, reliable checkout system with:
  * ✅ Database-first course lookup with static fallback
  * ✅ Grant coupon system (100% off) 
@@ -11,6 +13,10 @@
  * ✅ Clean error handling
  * ✅ No over-engineering
  * 
+ * 
+
+
+
  * FLOW:
  * 1. Validate request & get course data
  * 2. Check for duplicate enrollment
@@ -19,6 +25,9 @@
  * 5. Record affiliate tracking for both paths
  * 6. Return appropriate response
  */
+
+
+
 
 import { NextRequest, NextResponse } from 'next/server'
 import { stripe } from '@/lib/stripe'
