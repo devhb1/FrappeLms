@@ -397,6 +397,27 @@ export async function POST(req: NextRequest) {
                             customerEmail
                         });
                         console.log(`✅ FrappeLMS enrollment completed: ${frappeResult.enrollment_id}`);
+
+                        // Send success email notification
+                        try {
+                            const course = await getCourseFromDb(metadata.courseId);
+                            await sendEmail.coursePurchaseConfirmation(
+                                customerEmail,
+                                customerName || 'Student',
+                                course?.title || metadata.courseId,
+                                updatedEnrollment.amount,
+                                new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
+                            );
+                            ProductionLogger.info('Enrollment confirmation email sent', {
+                                email: customerEmail,
+                                courseId: metadata.courseId
+                            });
+                        } catch (emailError) {
+                            ProductionLogger.error('Failed to send enrollment email', {
+                                error: emailError instanceof Error ? emailError.message : 'Unknown error',
+                                email: customerEmail
+                            });
+                        }
                     } else {
                         // IMMEDIATE RETRY before queuing
                         ProductionLogger.warn('First Frappe attempt failed, retrying immediately...', {
@@ -442,6 +463,27 @@ export async function POST(req: NextRequest) {
                                 frappeEnrollmentId: retryResult.enrollment_id
                             });
                             console.log(`✅ FrappeLMS enrollment completed on retry: ${retryResult.enrollment_id}`);
+
+                            // Send success email notification
+                            try {
+                                const course = await getCourseFromDb(metadata.courseId);
+                                await sendEmail.coursePurchaseConfirmation(
+                                    customerEmail,
+                                    customerName || 'Student',
+                                    course?.title || metadata.courseId,
+                                    updatedEnrollment.amount,
+                                    new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
+                                );
+                                ProductionLogger.info('Enrollment confirmation email sent (retry)', {
+                                    email: customerEmail,
+                                    courseId: metadata.courseId
+                                });
+                            } catch (emailError) {
+                                ProductionLogger.error('Failed to send enrollment email (retry)', {
+                                    error: emailError instanceof Error ? emailError.message : 'Unknown error',
+                                    email: customerEmail
+                                });
+                            }
                         } else {
                             // Queue for later retry
                             ProductionLogger.error('Immediate retry failed, queuing for later', {

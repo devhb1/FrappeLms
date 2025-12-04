@@ -85,6 +85,31 @@ export async function POST(req: NextRequest) {
                 frappeEnrollmentId: frappeResult.enrollment_id
             });
 
+            // Send success email notification
+            try {
+                const { getCourseFromDb } = await import('@/lib/services/course');
+                const course = await getCourseFromDb(enrollment.courseId);
+                const { sendEmail } = await import('@/lib/emails');
+
+                await sendEmail.coursePurchaseConfirmation(
+                    enrollment.email,
+                    enrollment.lmsContext?.username || 'Student',
+                    course?.title || enrollment.courseId,
+                    enrollment.amount,
+                    new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
+                );
+
+                ProductionLogger.info('Enrollment confirmation email sent (manual sync)', {
+                    email: enrollment.email,
+                    courseId: enrollment.courseId
+                });
+            } catch (emailError) {
+                ProductionLogger.error('Failed to send enrollment email (manual sync)', {
+                    error: emailError instanceof Error ? emailError.message : 'Unknown error',
+                    email: enrollment.email
+                });
+            }
+
             return NextResponse.json({
                 success: true,
                 message: 'Successfully synced to Frappe LMS',
