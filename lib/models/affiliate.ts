@@ -408,17 +408,10 @@ affiliateSchema.statics.updateStatsFromEnrollments = async function (affiliateEm
 
 // ===== INSTANCE METHODS =====
 affiliateSchema.methods.generateAffiliateLink = function (courseId?: string) {
-    // Use frontend URL (Vercel) instead of LMS
-    const baseUrl = process.env.NEXT_PUBLIC_SITE_URL ||
-        process.env.NEXT_PUBLIC_APP_URL ||
-        'https://frappe-lms-five.vercel.app';
+    // Use LMS domain for affiliate links
+    const baseUrl = 'https://lms.maaledu.com';
 
-    // Generate course-specific link if courseId provided
-    if (courseId) {
-        return `${baseUrl}/courses/${encodeURIComponent(courseId)}?ref=${encodeURIComponent(this.email)}`;
-    }
-
-    // Generic affiliate link to homepage
+    // Generic affiliate link to LMS homepage with ref parameter
     return `${baseUrl}/?ref=${encodeURIComponent(this.email)}`;
 };
 

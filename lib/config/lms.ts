@@ -103,7 +103,7 @@ export const validateLMSConfig = (): boolean => {
  * Get affiliate link with LMS base URL
  */
 export const generateAffiliateLMSLink = (email: string): string => {
-    const baseUrl = getFrappeLMSUrl();
+    const baseUrl = 'https://lms.maaledu.com';
     const encodedEmail = encodeURIComponent(email);
     return `${baseUrl}/?ref=${encodedEmail}`;
 };

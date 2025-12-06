@@ -121,17 +121,10 @@ export type AffiliateRegistrationData = z.infer<typeof affiliateRegistrationSche
 export function generateAffiliateLink(email: string, courseId?: string): string {
     const encodedEmail = encodeURIComponent(email);
 
-    // Use frontend URL (Vercel deployment) instead of LMS
-    const baseUrl = process.env.NEXT_PUBLIC_SITE_URL ||
-        process.env.NEXT_PUBLIC_APP_URL ||
-        'https://frappe-lms-five.vercel.app';
+    // Use LMS domain for affiliate links
+    const baseUrl = 'https://lms.maaledu.com';
 
-    // Generate course-specific link if courseId provided
-    if (courseId) {
-        return `${baseUrl}/courses/${encodeURIComponent(courseId)}?ref=${encodedEmail}`;
-    }
-
-    // Generic affiliate link to homepage
+    // Generic affiliate link to LMS homepage with ref parameter
     return `${baseUrl}/?ref=${encodedEmail}`;
 }
 
