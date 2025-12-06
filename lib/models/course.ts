@@ -98,7 +98,7 @@ const courseSchema: Schema<ICourse> = new mongoose.Schema({
         validate: {
             validator: function (value: string) {
                 // Accept letters, numbers, hyphens, underscores, colons, plus, dots, percent, and forward slashes
-                // This matches Open edX course ID format: course-v1:Org+Course+Run
+                // This matches Frappe LMS course ID format: lowercase-with-hyphens
                 return /^[a-zA-Z0-9-_:+.%\/]+$/.test(value);
             },
             message: 'Course ID can only contain letters, numbers, and the following characters: - _ : + . % /'

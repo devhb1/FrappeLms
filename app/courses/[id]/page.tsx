@@ -94,10 +94,10 @@ export default function CourseDetailPage() {
 
     // Extract LMS redirect parameters from URL with enhanced parsing
     const lmsRedirectData = {
-        openedx_username: searchParams.get('openedx_username'),
-        openedx_email: searchParams.get('openedx_email') ? decodeURIComponent(searchParams.get('openedx_email')!) : null,
+        frappe_username: searchParams.get('frappe_username') || searchParams.get('openedx_username'),
+        frappe_email: searchParams.get('frappe_email') || (searchParams.get('openedx_email') ? decodeURIComponent(searchParams.get('openedx_email')!) : null),
         affiliate_email: searchParams.get('affiliate_email') ? decodeURIComponent(searchParams.get('affiliate_email')!) : null,
-        redirect_source: searchParams.get('openedx_username') || searchParams.get('affiliate_email') ? 'lms_redirect' : 'direct',
+        redirect_source: searchParams.get('frappe_username') || searchParams.get('openedx_username') || searchParams.get('affiliate_email') ? 'lms_redirect' : 'direct',
         // Additional LMS parameters for enhanced tracking
         session_id: searchParams.get('session_id'),
         course_run: searchParams.get('course_run'),
@@ -106,30 +106,30 @@ export default function CourseDetailPage() {
         utm_campaign: searchParams.get('utm_campaign')
     };
 
-    // Get email from URL params (support 'email', 'usermail', and 'openedx_email')
-    const urlEmail = searchParams.get('usermail') || searchParams.get('email') || lmsRedirectData.openedx_email || '';
+    // Get email from URL params (support 'email', 'usermail', 'useremail', and 'frappe_email')
+    const urlEmail = searchParams.get('usermail') || searchParams.get('useremail') || searchParams.get('email') || searchParams.get('frappe_email') || '';
 
     const [course, setCourse] = useState<Course | null>(null);
     const [loading, setLoading] = useState(true);
     const [email, setEmail] = useState(urlEmail);
-    const [username, setUsername] = useState(lmsRedirectData.openedx_username || 'testuser');
-    const [lmsEmail, setLmsEmail] = useState(lmsRedirectData.openedx_email || '');
+    const [username, setUsername] = useState(lmsRedirectData.frappe_username || '');
+    const [lmsEmail, setLmsEmail] = useState(lmsRedirectData.frappe_email || '');
     // Support both 'ref' and 'affiliate_email' URL params
     const [affiliateId, setAffiliateId] = useState(searchParams.get('ref') || lmsRedirectData.affiliate_email || '');
 
     // Update form fields when URL parameters change
     useEffect(() => {
-        const newUrlEmail = searchParams.get('usermail') || searchParams.get('email') || lmsRedirectData.openedx_email || '';
+        const newUrlEmail = searchParams.get('usermail') || searchParams.get('useremail') || searchParams.get('email') || lmsRedirectData.frappe_email || '';
         if (newUrlEmail && newUrlEmail !== email) {
             setEmail(newUrlEmail);
         }
 
-        const newUsername = lmsRedirectData.openedx_username || '';
+        const newUsername = lmsRedirectData.frappe_username || '';
         if (newUsername && newUsername !== username) {
             setUsername(newUsername);
         }
 
-        const newLmsEmail = lmsRedirectData.openedx_email || '';
+        const newLmsEmail = lmsRedirectData.frappe_email || '';
         if (newLmsEmail && newLmsEmail !== lmsEmail) {
             setLmsEmail(newLmsEmail);
         }
@@ -138,7 +138,7 @@ export default function CourseDetailPage() {
         if (newAffiliateId && newAffiliateId !== affiliateId) {
             setAffiliateId(newAffiliateId);
         }
-    }, [searchParams, lmsRedirectData.openedx_email, lmsRedirectData.openedx_username, lmsRedirectData.affiliate_email, username, lmsEmail, email, affiliateId]);
+    }, [searchParams, lmsRedirectData.frappe_email, lmsRedirectData.frappe_username, lmsRedirectData.affiliate_email, username, lmsEmail, email, affiliateId]);
 
     // Add validation state for self-referral
     const [validationState, setValidationState] = useState({
@@ -189,14 +189,14 @@ export default function CourseDetailPage() {
     // Handle LMS redirects and course loading
     useEffect(() => {
 
-        if (lmsRedirectData.openedx_username) {
+        if (lmsRedirectData.frappe_username) {
             toast({
-                title: "Welcome from MaalEdu LMS!",
-                description: `Hello ${lmsRedirectData.openedx_username}, you've been redirected from the LMS.`,
+                title: "Welcome from Frappe LMS!",
+                description: `Hello ${lmsRedirectData.frappe_username}, you've been redirected from Frappe LMS.`,
                 variant: "default"
             });
         }
-    }, [lmsRedirectData.openedx_username, lmsRedirectData.affiliate_email, courseId, searchParams, toast]);
+    }, [lmsRedirectData.frappe_username, lmsRedirectData.affiliate_email, courseId, searchParams, toast]);
 
     useEffect(() => {
         const fetchCourse = async () => {
@@ -364,7 +364,7 @@ export default function CourseDetailPage() {
             }
         }
 
-        // Validation - Either OpenEdX username OR email must be provided
+        // Validation - Either Frappe LMS username OR email must be provided
         const hasUsername = username.trim();
         const hasEmail = email.trim() || lmsEmail.trim();
 
@@ -377,9 +377,9 @@ export default function CourseDetailPage() {
             return;
         }
 
-        // If no username but has email, suggest username for better OpenEdX integration
+        // If no username but has email, suggest username for better Frappe LMS integration
         if (!hasUsername && hasEmail) {
-            console.log('⚠️ Proceeding without OpenEdX username - enrollment will use email fallback');
+            console.log('⚠️ Proceeding without Frappe LMS username - enrollment will use email fallback');
         }
 
         // Validate coupon if provided - allow proceeding even if coupon validation hasn't completed
@@ -404,7 +404,7 @@ export default function CourseDetailPage() {
             return;
         }
 
-        // Validate OpenEdX email if provided
+        // Validate Frappe LMS email if provided
         if (lmsEmail && !emailRegex.test(lmsEmail)) {
             toast({
                 title: "Invalid MaalEdu LMS Email",
@@ -472,7 +472,7 @@ export default function CourseDetailPage() {
                 email: primaryEmail || undefined,
                 couponCode: couponCode.trim() || undefined,
                 affiliateEmail: cleanAffiliateEmail || undefined,
-                username: username.trim() || lmsRedirectData.openedx_username || undefined,
+                username: username.trim() || lmsRedirectData.frappe_username || undefined,
                 redirectSource: lmsRedirectData.redirect_source as 'lms_redirect' | 'direct' | 'affiliate',
                 requestId: requestId
             };
@@ -977,7 +977,7 @@ export default function CourseDetailPage() {
                         <DialogTitle className="flex items-center gap-2">
                             <Mail className="w-5 h-5 text-orange-600" />
                             Complete Your Purchase
-                            {lmsRedirectData.openedx_username && (
+                            {lmsRedirectData.frappe_username && (
                                 <Badge variant="outline" className="ml-2 text-xs">
                                     MaalEdu LMS Redirect
                                 </Badge>
@@ -987,7 +987,7 @@ export default function CourseDetailPage() {
 
                     <div className="space-y-6">
                         {/* LMS Redirect Notice */}
-                        {lmsRedirectData.openedx_username && (
+                        {lmsRedirectData.frappe_username && (
                             <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-lg border border-blue-200 dark:border-blue-800">
                                 <div className="flex items-center gap-2 mb-2">
                                     <Globe className="w-4 h-4 text-blue-600" />
@@ -996,7 +996,7 @@ export default function CourseDetailPage() {
                                     </span>
                                 </div>
                                 <div className="text-sm text-blue-700 dark:text-blue-300 space-y-1">
-                                    <p>• Username: <span className="font-mono">{lmsRedirectData.openedx_username}</span></p>
+                                    <p>• Username: <span className="font-mono">{lmsRedirectData.frappe_username}</span></p>
                                     {lmsRedirectData.affiliate_email && (
                                         <p>• Affiliate: <span className="font-mono">{lmsRedirectData.affiliate_email}</span></p>
                                     )}
@@ -1049,7 +1049,7 @@ export default function CourseDetailPage() {
                             <div>
                                 <Label htmlFor="email" className="text-sm font-medium text-gray-700 dark:text-gray-300">
                                     Email Address
-                                    {lmsRedirectData.openedx_email && (
+                                    {lmsRedirectData.frappe_email && (
                                         <Badge variant="secondary" className="ml-2 text-xs">
                                             Pre-filled from LMS
                                         </Badge>
@@ -1062,18 +1062,18 @@ export default function CourseDetailPage() {
                                     value={email}
                                     onChange={(e) => {
                                         setEmail(e.target.value)
-                                        // Auto-sync with OpenEdX email if not pre-filled
-                                        if (!lmsRedirectData.openedx_email) {
+                                        // Auto-sync with Frappe LMS email if not pre-filled
+                                        if (!lmsRedirectData.frappe_email) {
                                             setLmsEmail(e.target.value)
                                         }
                                     }}
                                     className="mt-2"
                                     required
-                                    readOnly={!!lmsRedirectData.openedx_email}
-                                    disabled={!!lmsRedirectData.openedx_email}
+                                    readOnly={!!lmsRedirectData.frappe_email}
+                                    disabled={!!lmsRedirectData.frappe_email}
                                 />
                                 <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                                    {lmsRedirectData.openedx_email
+                                    {lmsRedirectData.frappe_email
                                         ? "Email pre-filled from your LMS account. Course access will be synced automatically."
                                         : "Email for course access and communications. This will be used for enrollment."
                                     }
@@ -1082,26 +1082,26 @@ export default function CourseDetailPage() {
 
                             {/* MaalEdu LMS Username - Either username OR email required for direct users */}
                             <div>
-                                <Label htmlFor="openedx-username" className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                                <Label htmlFor="frappe-username" className="text-sm font-medium text-gray-700 dark:text-gray-300">
                                     MaalEdu LMS Username (Recommended)
-                                    {lmsRedirectData.openedx_username && (
+                                    {lmsRedirectData.frappe_username && (
                                         <Badge variant="secondary" className="ml-2 text-xs">
                                             Pre-filled from LMS
                                         </Badge>
                                     )}
                                 </Label>
                                 <Input
-                                    id="openedx-username"
+                                    id="frappe-username"
                                     type="text"
                                     placeholder="your_maaledu_username"
                                     value={username}
                                     onChange={(e) => setUsername(e.target.value)}
                                     className="mt-2"
-                                    readOnly={!!lmsRedirectData.openedx_username}
-                                    disabled={!!lmsRedirectData.openedx_username}
+                                    readOnly={!!lmsRedirectData.frappe_username}
+                                    disabled={!!lmsRedirectData.frappe_username}
                                 />
                                 <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                                    {lmsRedirectData.openedx_username
+                                    {lmsRedirectData.frappe_username
                                         ? "Username pre-filled from your LMS account."
                                         : "Your MaalEdu LMS username. Recommended for better course sync, but you can proceed with just email if needed."
                                     }

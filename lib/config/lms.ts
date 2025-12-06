@@ -7,7 +7,7 @@
  * This utility ensures consistent LMS URL usage across the application.
  * 
  * Migration Notes:
- * - Migrated from OpenEDX (apps.lms.maaledu.com) to Frappe LMS
+ * - Using Frappe LMS (lms.maaledu.com) for course delivery
  * - All URLs now point to Frappe LMS instance
  * - Backward compatibility maintained for existing references
  */
@@ -75,7 +75,7 @@ export const LMS_CONFIG = {
 
     // Legacy support (for backward compatibility)
     legacy: {
-        openedxUrl: 'https://apps.lms.maaledu.com', // Deprecated - kept for reference
+        // Legacy OpenEdX URL removed - now using Frappe LMS exclusively
         oldUrl: 'https://lms.maaledu.com', // Deprecated - kept for reference
     }
 } as const;

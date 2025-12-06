@@ -2,7 +2,7 @@ import { Course } from './types'
 
 export const COURSES: Course[] = [
     {
-        courseId: 'course-v1:OpenedX+DemoX+DemoCourse',
+        courseId: 'block-chain-basics',
         title: 'Blockchain Fundamentals & Development',
         description: 'Master the core concepts of blockchain technology, including distributed ledgers, consensus mechanisms, and smart contract development. Perfect for beginners looking to enter the blockchain space.',
         price: 199.99,
