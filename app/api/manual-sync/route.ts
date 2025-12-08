@@ -65,8 +65,7 @@ export async function POST(req: NextRequest) {
             payment_id: enrollment.paymentId,
             amount: enrollment.amount,
             currency: enrollment.currency || 'usd',
-            referral_code: enrollment.affiliateData?.affiliateEmail,
-            enrollment_type: enrollment.enrollmentType
+            referral_code: enrollment.affiliateData?.affiliateEmail
         });
 
         if (frappeResult.success) {

@@ -146,7 +146,7 @@ export async function POST(request: NextRequest) {
                 } else {
                     // Send rejection email
                     const emailResult = await safeEmailSend(
-                        sendEmail.grantRejection(grant.email, grant.username, grant.course.title, 'Application did not meet criteria'),
+                        sendEmail.grantRejection(grant.email, grant.username, grant.courseId || 'Course', 'Application did not meet criteria'),
                         `grant rejection for ${grant.email}`
                     );
                     emailSuccess = emailResult.success;

@@ -368,18 +368,14 @@ export default function CourseDetailPage() {
         const hasUsername = username.trim();
         const hasEmail = email.trim() || lmsEmail.trim();
 
-        if (!hasUsername && !hasEmail) {
+        // Email is required for checkout
+        if (!hasEmail) {
             toast({
-                title: "Username or Email Required",
-                description: "Please enter either your MaalEdu LMS username or email address to proceed.",
+                title: "Email Required",
+                description: "Please enter your email address to proceed with checkout.",
                 variant: "destructive"
             });
             return;
-        }
-
-        // If no username but has email, suggest username for better Frappe LMS integration
-        if (!hasUsername && hasEmail) {
-            console.log('⚠️ Proceeding without Frappe LMS username - enrollment will use email fallback');
         }
 
         // Validate coupon if provided - allow proceeding even if coupon validation hasn't completed
@@ -433,14 +429,9 @@ export default function CourseDetailPage() {
             // Create primary email with proper validation
             const primaryEmail = email.trim() || lmsEmail.trim() || '';
 
-            // Validate required fields before sending - make username optional if email provided
+            // Validate required field - email is mandatory
             if (!primaryEmail) {
-                throw new Error('Email address is required');
-            }
-
-            // Username is recommended but not required if email is provided
-            if (!username.trim() && !primaryEmail) {
-                throw new Error('Either MaalEdu LMS username or email address is required');
+                throw new Error('Email address is required for enrollment');
             } console.log('📋 Checkout details:', {
                 primaryEmail,
                 hasEmail: !!email.trim(),
@@ -472,7 +463,7 @@ export default function CourseDetailPage() {
                 email: primaryEmail || undefined,
                 couponCode: couponCode.trim() || undefined,
                 affiliateEmail: cleanAffiliateEmail || undefined,
-                username: username.trim() || lmsRedirectData.frappe_username || undefined,
+                // username removed - no longer collected in UI, email is sufficient for Frappe LMS
                 redirectSource: lmsRedirectData.redirect_source as 'lms_redirect' | 'direct' | 'affiliate',
                 requestId: requestId
             };
@@ -1080,33 +1071,7 @@ export default function CourseDetailPage() {
                                 </p>
                             </div>
 
-                            {/* MaalEdu LMS Username - Either username OR email required for direct users */}
-                            <div>
-                                <Label htmlFor="frappe-username" className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                                    MaalEdu LMS Username (Recommended)
-                                    {lmsRedirectData.frappe_username && (
-                                        <Badge variant="secondary" className="ml-2 text-xs">
-                                            Pre-filled from LMS
-                                        </Badge>
-                                    )}
-                                </Label>
-                                <Input
-                                    id="frappe-username"
-                                    type="text"
-                                    placeholder="your_maaledu_username"
-                                    value={username}
-                                    onChange={(e) => setUsername(e.target.value)}
-                                    className="mt-2"
-                                    readOnly={!!lmsRedirectData.frappe_username}
-                                    disabled={!!lmsRedirectData.frappe_username}
-                                />
-                                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                                    {lmsRedirectData.frappe_username
-                                        ? "Username pre-filled from your LMS account."
-                                        : "Your MaalEdu LMS username. Recommended for better course sync, but you can proceed with just email if needed."
-                                    }
-                                </p>
-                            </div>
+                            {/* MaalEdu LMS Username field removed - Email is sufficient for enrollment */}
 
 
 

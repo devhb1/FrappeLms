@@ -505,4 +505,10 @@ courseSchema.statics.getStats = async function () {
  * Course model with full schema and business logic.
  * Handles course management, enrollment tracking, and analytics.
  */
-export const Course = mongoose.models.Course || mongoose.model<ICourse>('Course', courseSchema);
+
+// Clear existing model to prevent "Cannot overwrite model" errors
+if (mongoose.models.Course) {
+    delete mongoose.models.Course;
+}
+
+export const Course = mongoose.model<ICourse>('Course', courseSchema);

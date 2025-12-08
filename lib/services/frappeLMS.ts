@@ -31,7 +31,7 @@ const ensureProtocol = (url: string): string => {
 const FRAPPE_CONFIG = {
     baseUrl: ensureProtocol(process.env.FRAPPE_LMS_BASE_URL || 'lms.maaledu.com'),
     apiKey: process.env.FRAPPE_LMS_API_KEY || '',
-    timeout: 5000 // 5 seconds for faster failure detection and better UX
+    timeout: 15000 // 15 seconds - reasonable timeout for enrollment operations
 };
 
 // ===== TYPE DEFINITIONS =====
@@ -47,12 +47,6 @@ export interface FrappeEnrollmentRequest {
     amount: number;
     currency?: string; // Optional, defaults to 'usd'
     referral_code?: string;
-
-    // Optional grant metadata
-    original_amount?: number;
-    discount_percentage?: number;
-    grant_id?: string;
-    enrollment_type?: string;
 }
 
 /**
@@ -221,13 +215,7 @@ export async function enrollInFrappeLMS(
         if (data.referral_code) requestPayload.referral_code = data.referral_code;
 
         ProductionLogger.info('Clean Frappe payload constructed', {
-            payload: requestPayload,
-            extraFieldsIgnored: {
-                enrollment_type: data.enrollment_type,
-                original_amount: data.original_amount,
-                discount_percentage: data.discount_percentage,
-                grant_id: data.grant_id
-            }
+            payload: requestPayload
         });
 
         const response = await fetch(enrollmentUrl, {

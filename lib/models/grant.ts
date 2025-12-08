@@ -81,6 +81,26 @@ export interface IGrant extends Document {
     createdAt: Date;                            // Application submission date
     processedAt?: Date;                         // Admin decision date
     processedBy?: string;                       // Admin who made decision
+
+    // ===== INSTANCE METHODS =====
+    calculatePricing(coursePrice: number): {
+        originalPrice: number;
+        discountPercentage: number;
+        discountAmount: number;
+        finalPrice: number;
+        requiresPayment: boolean;
+    };
+    isValidCoupon(): boolean;
+    getCouponInfo(): {
+        code?: string;
+        discountPercentage: number;
+        discountType: string;
+        originalPrice: number;
+        finalPrice: number;
+        requiresPayment: boolean;
+        expiresAt?: Date;
+        isExpired?: boolean;
+    };
 }
 
 // ===== GRANT SCHEMA =====
@@ -290,7 +310,12 @@ grantSchema.methods.getCouponInfo = function () {
 
 // ===== GRANT MODEL =====
 
-export const Grant = mongoose.models.Grant || mongoose.model<IGrant>('Grant', grantSchema);
+// Clear existing model to prevent "Cannot overwrite model" errors
+if (mongoose.models.Grant) {
+    delete mongoose.models.Grant;
+}
+
+export const Grant = mongoose.model<IGrant>('Grant', grantSchema);
 
 // Legacy export for backward compatibility
 export const grantModel = Grant;

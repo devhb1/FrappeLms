@@ -207,15 +207,21 @@ class SimpleEmailService {
         amount: number,
         purchaseDate: string
     ): Promise<boolean> {
+        // Validate and provide safe defaults for template variables
+        const safeCustomerName = (customerName && customerName.trim()) || 'Student';
+        const safeCourseName = (courseName && courseName.trim()) || 'Your Course';
+        const safeAmount = (typeof amount === 'number' && !isNaN(amount)) ? amount : 0;
+        const safePurchaseDate = (purchaseDate && purchaseDate.trim()) || new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+
         return this.sendTemplateEmail(
             email,
             '🎉 Course Purchase Confirmed - MaalEdu',
             'course-purchase-confirmation',
             {
-                customerName,
-                courseName,
-                amount: amount.toFixed(2),
-                purchaseDate
+                customerName: safeCustomerName,
+                courseName: safeCourseName,
+                amount: safeAmount.toFixed(2),
+                purchaseDate: safePurchaseDate
             }
         );
     }
@@ -227,15 +233,21 @@ class SimpleEmailService {
         enrollmentDate: string,
         originalAmount: number
     ): Promise<boolean> {
+        // Validate and provide safe defaults
+        const safeCustomerName = (customerName && customerName.trim()) || 'Student';
+        const safeCourseName = (courseName && courseName.trim()) || 'Your Course';
+        const safeEnrollmentDate = (enrollmentDate && enrollmentDate.trim()) || new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+        const safeOriginalAmount = (typeof originalAmount === 'number' && !isNaN(originalAmount)) ? originalAmount : 0;
+
         return this.sendTemplateEmail(
             email,
             '🎉 Grant Course Enrollment Confirmed - MaalEdu',
             'grant-course-enrollment',
             {
-                customerName,
-                courseName,
-                enrollmentDate,
-                originalAmount: originalAmount.toFixed(2)
+                customerName: safeCustomerName,
+                courseName: safeCourseName,
+                enrollmentDate: safeEnrollmentDate,
+                originalAmount: safeOriginalAmount.toFixed(2)
             }
         );
     }

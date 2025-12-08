@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import Image from "next/image"
+import { getLMSRegistrationUrl } from "@/lib/config/lms"
 
 export default function AboutUsPage() {
   return (
@@ -63,9 +64,9 @@ export default function AboutUsPage() {
                 </h2>
                 <div className="w-16 h-1 bg-gray-800 dark:bg-gray-300 mb-6"></div>
                 <p className="text-lg text-gray-600 dark:text-gray-300 leading-relaxed">
-                  We empower the next generation of blockchain innovators through accessible, 
-                  industry-relevant education. Our courses cater to high school leavers, 
-                  undergraduates, postgraduates, and aspiring professionals, offering flexibility and 
+                  We empower the next generation of blockchain innovators through accessible,
+                  industry-relevant education. Our courses cater to high school leavers,
+                  undergraduates, postgraduates, and aspiring professionals, offering flexibility and
                   hands-on experience for real-world success in the blockchain space.
                 </p>
               </div>
@@ -341,8 +342,10 @@ export default function AboutUsPage() {
               {/* Call to Action */}
               <div className="text-center mt-20">
                 <div className="inline-flex items-center justify-center">
-                  <Button size="lg" className="bg-orange-600 hover:bg-orange-700 text-white px-10 py-4 text-lg font-semibold rounded-full shadow-lg hover:shadow-xl transition-all transform hover:scale-105">
-                    Begin Learning Today
+                  <Button size="lg" className="bg-orange-600 hover:bg-orange-700 text-white px-10 py-4 text-lg font-semibold rounded-full shadow-lg hover:shadow-xl transition-all transform hover:scale-105" asChild>
+                    <a href={getLMSRegistrationUrl()} target="_blank" rel="noopener noreferrer">
+                      Begin Learning Today
+                    </a>
                   </Button>
                 </div>
               </div>

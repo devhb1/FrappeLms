@@ -26,8 +26,10 @@ export default function CertificationPage() {
                   Advance your blockchain career with Maal Data Lab integrated dual diploma program, offering both practical
                   skills and academic recognition.
                 </p>
-                <Button size="lg" className="bg-white text-orange-600 hover:bg-orange-50 px-8 py-3">
-                  Get Started Today
+                <Button size="lg" className="bg-white text-orange-600 hover:bg-orange-50 px-8 py-3" asChild>
+                  <a href={getLMSRegistrationUrl()} target="_blank" rel="noopener noreferrer">
+                    Get Started Today
+                  </a>
                 </Button>
               </div>
               <div className="relative lg:block hidden">
@@ -76,8 +78,10 @@ export default function CertificationPage() {
                     Professional Diploma from Maal Data Lab Sdn Bhd and the [Academic] Diploma from
                     Warnborough College, UK.
                   </p>
-                  <Button className="bg-orange-600 hover:bg-orange-700 text-white px-8 py-3">
-                    Learn More
+                  <Button className="bg-orange-600 hover:bg-orange-700 text-white px-8 py-3" asChild>
+                    <a href="/faqs">
+                      Learn More
+                    </a>
                   </Button>
                 </div>
               </div>
@@ -258,19 +262,19 @@ export default function CertificationPage() {
               <p className="text-xl text-orange-100 dark:text-orange-200 mb-8 leading-relaxed">
                 Join thousands of professionals who have advanced their careers with our comprehensive blockchain certification program.
               </p>
-              <div className="flex flex-col sm:flex-row gap-4 justify-center">
-                <Button size="lg" variant="secondary" className="px-8 py-3 text-lg">
+              <div className="flex justify-center">
+                <Button size="lg" variant="secondary" className="px-8 py-3 text-lg" asChild>
                   <a href={getLMSRegistrationUrl()} target="_blank" rel="noopener noreferrer">
                     Enroll Now
                   </a>
                 </Button>
-                <Button
+                {/* <Button
                   size="lg"
                   variant="outline"
                   className="px-8 py-3 text-lg border-white text-white hover:bg-white hover:text-orange-600 bg-transparent"
                 >
                   Download Brochure
-                </Button>
+                </Button> */}
               </div>
 
               <div className="grid md:grid-cols-3 gap-8 mt-16 text-center">

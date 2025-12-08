@@ -83,7 +83,7 @@ export const authOptions: NextAuthOptions = {
 
                     // Return minimal user info for JWT
                     return {
-                        id: user._id.toString(),
+                        id: String(user._id),
                         email: user.email,
                         username: user.username,
                         role: user.role

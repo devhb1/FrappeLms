@@ -12,6 +12,7 @@ import { Enrollment, IEnrollment } from '../models/enrollment';
 import { Affiliate } from '../models/affiliate';
 import { logger } from '../utils/logger';
 import { updateCourseEnrollment } from './course';
+import { calculateCommission, validateCommission } from '../utils/commission';
 
 export interface CreateEnrollmentData {
     email: string;
@@ -24,9 +25,11 @@ export interface CreateEnrollmentData {
     // Optional affiliate data
     affiliateData?: {
         affiliateEmail: string;
-        commissionAmount: number;
-        commissionRate: number;
-        commissionEligible: boolean;
+        commissionAmount?: number;  // Optional: will be calculated if not provided
+        commissionRate?: number;    // Optional: will use affiliate's rate if not provided
+        commissionEligible?: boolean;
+        referralSource?: 'affiliate_link' | 'grant_with_affiliate' | 'lms_redirect_affiliate';
+        referralTimestamp?: Date;
     };
 
     // Optional grant data
@@ -71,6 +74,57 @@ export async function createEnrollment(data: CreateEnrollmentData): Promise<IEnr
             throw new Error('User already enrolled in this course');
         }
 
+        // Process affiliate data if provided
+        let processedAffiliateData = null;
+        if (data.affiliateData) {
+            const { affiliateEmail, commissionRate, commissionAmount, commissionEligible = true } = data.affiliateData;
+
+            // Find affiliate to get commission rate if not provided
+            const affiliate = await Affiliate.findOne({ email: affiliateEmail.toLowerCase() });
+            if (!affiliate) {
+                logger.warn('Affiliate not found', { affiliateEmail });
+                throw new Error('Invalid affiliate email');
+            }
+
+            // Use provided rate or affiliate's default rate
+            const finalRate = commissionRate !== undefined ? commissionRate : (affiliate.commissionRate || 10);
+
+            // Calculate commission if not provided
+            const finalCommission = commissionAmount !== undefined
+                ? commissionAmount
+                : calculateCommission(data.amount, finalRate);
+
+            // Validate commission if both amount and rate provided
+            if (commissionAmount !== undefined && commissionRate !== undefined) {
+                if (!validateCommission(data.amount, commissionRate, commissionAmount)) {
+                    logger.error('Commission validation failed', {
+                        amount: data.amount,
+                        rate: commissionRate,
+                        providedCommission: commissionAmount,
+                        calculatedCommission: calculateCommission(data.amount, commissionRate)
+                    });
+                    throw new Error('Commission amount does not match rate calculation');
+                }
+            }
+
+            processedAffiliateData = {
+                affiliateEmail: affiliateEmail.toLowerCase(),
+                commissionAmount: finalCommission,
+                commissionRate: finalRate,
+                commissionEligible,
+                referralSource: data.affiliateData.referralSource || 'affiliate_link',
+                referralTimestamp: data.affiliateData.referralTimestamp || new Date(),
+                commissionPaid: false  // Always starts unpaid
+            };
+
+            logger.info('Commission calculated', {
+                amount: data.amount,
+                rate: finalRate,
+                commission: finalCommission,
+                affiliateEmail: '[EMAIL_REDACTED]'
+            });
+        }
+
         // Create enrollment document
         const enrollment = new Enrollment({
             email: data.email.toLowerCase(),
@@ -88,12 +142,9 @@ export async function createEnrollment(data: CreateEnrollmentData): Promise<IEnr
                 verificationDate: data.status === 'paid' ? new Date() : undefined
             },
 
-            // Optional affiliate data
-            ...(data.affiliateData && {
-                affiliateData: {
-                    ...data.affiliateData,
-                    affiliateEmail: data.affiliateData.affiliateEmail.toLowerCase()
-                }
+            // Optional affiliate data (processed with commission calculation)
+            ...(processedAffiliateData && {
+                affiliateData: processedAffiliateData
             }),
 
             // Optional grant data
@@ -231,7 +282,9 @@ async function handleSuccessfulPayment(enrollment: IEnrollment): Promise<void> {
 }
 
 /**
- * Process affiliate commission
+ * Process affiliate commission tracking
+ * Note: This tracks the commission but does NOT mark it as paid
+ * Payment is handled separately via the payout service
  */
 async function processAffiliateCommission(enrollment: IEnrollment): Promise<void> {
     try {
@@ -253,7 +306,7 @@ async function processAffiliateCommission(enrollment: IEnrollment): Promise<void
         // Refresh affiliate stats to include this new enrollment
         await affiliate.refreshStats();
 
-        logger.success('Affiliate commission processed', {
+        logger.success('Affiliate commission tracked (unpaid)', {
             affiliateEmail: '[EMAIL_REDACTED]',
             enrollmentId: enrollment._id,
             commissionAmount: enrollment.affiliateData.commissionAmount

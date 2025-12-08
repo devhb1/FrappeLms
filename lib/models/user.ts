@@ -87,6 +87,13 @@ export interface IUser extends Document {
     lastLogin?: Date;              // Last login timestamp for activity tracking
     profileImage?: string;         // Avatar/profile picture URL
     createdAt: Date;               // Account creation timestamp
+
+    // Instance methods
+    hasPurchasedCourse(courseId: string): boolean;
+    addPurchasedCourse(course: Omit<IPurchasedCourse, 'enrolledAt'>): Promise<IUser>;
+    updateCourseProgress(courseId: string, progress: number): Promise<IUser | null>;
+    updateLastLogin(): Promise<void>;
+    isSuperAdmin(): boolean;
 }
 
 // ===============================
@@ -144,7 +151,7 @@ const userSchema: Schema<IUser> = new mongoose.Schema({
     },
 
     // ===== EMAIL VERIFICATION SYSTEM =====
-    verifyCode: { 
+    verifyCode: {
         type: String,
         required: function (this: IUser) {
             // Verification code required only for unverified users
@@ -579,7 +586,13 @@ userSchema.statics.getUserStats = async function () {
  * User model with comprehensive authentication, course tracking, and analytics.
  * Handles user lifecycle from registration through course completion.
  */
-export const User = mongoose.models.User || mongoose.model<IUser>('User', userSchema);
+
+// Clear existing model to prevent "Cannot overwrite model" errors
+if (mongoose.models.User) {
+    delete mongoose.models.User;
+}
+
+export const User = mongoose.model<IUser>('User', userSchema);
 
 // Legacy exports for backward compatibility
 export const userModel = User;

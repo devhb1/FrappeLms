@@ -7,6 +7,7 @@ import { RetryJob } from '@/lib/models/retry-job';
 import { getCourseFromDb } from '@/lib/services/course';
 import { sendEmail } from '@/lib/emails';
 import ProductionLogger from '@/lib/utils/production-logger';
+import { calculateCommission } from '@/lib/services';
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
     // @ts-ignore - Different Stripe versions between local and Vercel
@@ -159,10 +160,36 @@ export async function POST(req: NextRequest) {
             console.log(`🔗 Enrollment ID from metadata: ${metadata.enrollmentId}`);
             console.log(`👥 Affiliate Email: ${metadata.affiliateEmail || 'None'}`);
 
-            // Validate required metadata
+            // Validate required metadata with standardized error response
             if (!metadata.enrollmentId) {
                 console.error(`❌ Missing enrollmentId in webhook metadata`);
-                return NextResponse.json({ error: 'Missing enrollment ID' }, { status: 400 });
+                ProductionLogger.error('Missing enrollmentId in webhook metadata', {
+                    eventId: event.id,
+                    sessionId: session.id
+                });
+                return NextResponse.json({
+                    error: 'Missing enrollment ID in webhook metadata',
+                    code: 'MISSING_ENROLLMENT_ID',
+                    retryable: false,
+                    eventId: event.id
+                }, { status: 400 });
+            }
+
+            // Validate enrollmentId format to prevent crashes
+            const mongoose = await import('mongoose');
+            if (!mongoose.Types.ObjectId.isValid(metadata.enrollmentId)) {
+                console.error(`❌ Invalid enrollmentId format: ${metadata.enrollmentId}`);
+                ProductionLogger.error('Invalid enrollmentId in webhook', {
+                    enrollmentId: metadata.enrollmentId,
+                    eventId: event.id
+                });
+                return NextResponse.json({
+                    error: 'Invalid enrollment ID format',
+                    code: 'INVALID_ENROLLMENT_ID',
+                    retryable: false,
+                    details: { enrollmentId: metadata.enrollmentId },
+                    eventId: event.id
+                }, { status: 400 });
             }
 
             // Find and update existing enrollment instead of creating new one
@@ -272,52 +299,32 @@ export async function POST(req: NextRequest) {
                 }
             }
 
-            // Send course purchase confirmation email
-            try {
-                const course = await getCourseFromDb(metadata.courseId);
-                const purchaseDate = new Date().toLocaleDateString('en-US', {
-                    year: 'numeric',
-                    month: 'long',
-                    day: 'numeric'
-                });
-
-                console.log(`📧 Sending course purchase confirmation email to: ${customerEmail}`);
-
-                // Send appropriate email based on enrollment type
-                if (updatedEnrollment.enrollmentType === 'partial_grant' && updatedEnrollment.grantData) {
-                    // Enhanced partial grant enrollment confirmation
-                    await sendEmail.partialGrantEnrollment(
-                        customerEmail,
-                        customerName,
-                        course?.title || 'Course',
-                        purchaseDate,
-                        updatedEnrollment.grantData.originalPrice || updatedEnrollment.amount,
-                        updatedEnrollment.amount,
-                        updatedEnrollment.grantData.discountPercentage || 0,
-                        metadata.grantId ? `Coupon used from grant` : 'Grant coupon'
-                    );
-                    console.log(`✅ Partial grant enrollment confirmation email sent (${updatedEnrollment.grantData.discountPercentage}% discount applied)`);
-                } else {
-                    // Regular paid enrollment
-                    await sendEmail.coursePurchaseConfirmation(
-                        customerEmail,
-                        customerName,
-                        course?.title || 'Course',
-                        updatedEnrollment.amount,
-                        purchaseDate
-                    );
-                    console.log(`✅ Course purchase confirmation email sent successfully`);
-                }
-            } catch (emailError) {
-                console.error(`❌ Failed to send course purchase confirmation email:`, emailError);
-                // Don't fail the webhook if email fails - log and continue
-            }
-
-            // Process affiliate commission if applicable
+            // Process affiliate commission if applicable (with error handling and idempotency)
             const affiliateEmail = updatedEnrollment.affiliateData?.affiliateEmail || metadata.affiliateEmail;
             if (affiliateEmail && affiliateEmail !== '') {
-                console.log(`👥 Processing affiliate commission for: ${affiliateEmail}`);
-                await processAffiliateCommission(updatedEnrollment, affiliateEmail);
+                // IDEMPOTENCY CHECK: Only process if not already processed
+                if (!updatedEnrollment.affiliateData?.commissionProcessed) {
+                    try {
+                        ProductionLogger.info('Processing affiliate commission', {
+                            affiliateEmail,
+                            enrollmentId: updatedEnrollment._id
+                        });
+                        await processAffiliateCommission(updatedEnrollment, affiliateEmail);
+                    } catch (commissionError) {
+                        ProductionLogger.error('Affiliate commission processing failed', {
+                            error: commissionError instanceof Error ? commissionError.message : 'Unknown',
+                            affiliateEmail,
+                            enrollmentId: updatedEnrollment._id,
+                            stack: commissionError instanceof Error ? commissionError.stack : undefined
+                        });
+                        // Don't fail webhook - commission can be recalculated later via refresh-stats
+                    }
+                } else {
+                    ProductionLogger.info('Affiliate commission already processed, skipping', {
+                        affiliateEmail,
+                        enrollmentId: updatedEnrollment._id
+                    });
+                }
             } else {
                 console.log(`ℹ️ No affiliate associated with this enrollment`);
             }
@@ -364,11 +371,7 @@ export async function POST(req: NextRequest) {
                         payment_id: updatedEnrollment.paymentId,
                         amount: updatedEnrollment.amount,
                         currency: 'USD',
-                        referral_code: affiliateEmail || undefined,
-                        // Grant metadata for partial discounts
-                        original_amount: updatedEnrollment.originalAmount,
-                        discount_percentage: updatedEnrollment.grantData?.discountPercentage,
-                        grant_id: updatedEnrollment.grantData?.grantId?.toString()
+                        referral_code: affiliateEmail || undefined
                     });
 
                     if (frappeResult.success) {
@@ -398,20 +401,42 @@ export async function POST(req: NextRequest) {
                         });
                         console.log(`✅ FrappeLMS enrollment completed: ${frappeResult.enrollment_id}`);
 
-                        // Send success email notification
+                        // Send success email notification (with proper template for partial grants)
                         try {
                             const course = await getCourseFromDb(metadata.courseId);
-                            await sendEmail.coursePurchaseConfirmation(
-                                customerEmail,
-                                customerName || 'Student',
-                                course?.title || metadata.courseId,
-                                updatedEnrollment.amount,
-                                new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
-                            );
-                            ProductionLogger.info('Enrollment confirmation email sent', {
-                                email: customerEmail,
-                                courseId: metadata.courseId
-                            });
+
+                            // Check if this is a partial grant enrollment
+                            if (updatedEnrollment.enrollmentType === 'partial_grant' && updatedEnrollment.grantData) {
+                                // Send partial grant email with savings information
+                                await sendEmail.partialGrantEnrollment(
+                                    customerEmail,
+                                    customerName || 'Student',
+                                    course?.title || metadata.courseId,
+                                    new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }),
+                                    updatedEnrollment.grantData.originalPrice || updatedEnrollment.amount,
+                                    updatedEnrollment.amount,
+                                    updatedEnrollment.grantData.discountPercentage || 0,
+                                    updatedEnrollment.grantData.couponCode || 'N/A'
+                                );
+                                ProductionLogger.info('Partial grant enrollment confirmation email sent', {
+                                    email: customerEmail,
+                                    courseId: metadata.courseId,
+                                    savings: (updatedEnrollment.grantData.originalPrice || 0) - updatedEnrollment.amount
+                                });
+                            } else {
+                                // Send regular purchase confirmation
+                                await sendEmail.coursePurchaseConfirmation(
+                                    customerEmail,
+                                    customerName || 'Student',
+                                    course?.title || metadata.courseId,
+                                    updatedEnrollment.amount,
+                                    new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
+                                );
+                                ProductionLogger.info('Enrollment confirmation email sent', {
+                                    email: customerEmail,
+                                    courseId: metadata.courseId
+                                });
+                            }
                         } catch (emailError) {
                             ProductionLogger.error('Failed to send enrollment email', {
                                 error: emailError instanceof Error ? emailError.message : 'Unknown error',
@@ -434,10 +459,7 @@ export async function POST(req: NextRequest) {
                             payment_id: updatedEnrollment.paymentId,
                             amount: updatedEnrollment.amount,
                             currency: 'USD',
-                            referral_code: affiliateEmail || undefined,
-                            original_amount: updatedEnrollment.originalAmount,
-                            discount_percentage: updatedEnrollment.grantData?.discountPercentage,
-                            grant_id: updatedEnrollment.grantData?.grantId?.toString()
+                            referral_code: affiliateEmail || undefined
                         });
 
                         if (retryResult.success) {
@@ -464,20 +486,60 @@ export async function POST(req: NextRequest) {
                             });
                             console.log(`✅ FrappeLMS enrollment completed on retry: ${retryResult.enrollment_id}`);
 
-                            // Send success email notification
+                            // Update RetryJob status if it exists
+                            if (updatedEnrollment.frappeSync?.retryJobId) {
+                                try {
+                                    await RetryJob.findByIdAndUpdate(updatedEnrollment.frappeSync.retryJobId, {
+                                        status: 'completed',
+                                        completedAt: new Date()
+                                    });
+                                    ProductionLogger.info('RetryJob marked as completed', {
+                                        retryJobId: updatedEnrollment.frappeSync.retryJobId
+                                    });
+                                } catch (retryJobError) {
+                                    ProductionLogger.error('Failed to update RetryJob status', {
+                                        error: retryJobError instanceof Error ? retryJobError.message : 'Unknown',
+                                        retryJobId: updatedEnrollment.frappeSync.retryJobId
+                                    });
+                                }
+                            }
+
+                            // Send success email notification (with proper template for partial grants)
                             try {
                                 const course = await getCourseFromDb(metadata.courseId);
-                                await sendEmail.coursePurchaseConfirmation(
-                                    customerEmail,
-                                    customerName || 'Student',
-                                    course?.title || metadata.courseId,
-                                    updatedEnrollment.amount,
-                                    new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
-                                );
-                                ProductionLogger.info('Enrollment confirmation email sent (retry)', {
-                                    email: customerEmail,
-                                    courseId: metadata.courseId
-                                });
+
+                                // Check if this is a partial grant enrollment
+                                if (updatedEnrollment.enrollmentType === 'partial_grant' && updatedEnrollment.grantData) {
+                                    // Send partial grant email with savings information
+                                    await sendEmail.partialGrantEnrollment(
+                                        customerEmail,
+                                        customerName || 'Student',
+                                        course?.title || metadata.courseId,
+                                        new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }),
+                                        updatedEnrollment.grantData.originalPrice || updatedEnrollment.amount,
+                                        updatedEnrollment.amount,
+                                        updatedEnrollment.grantData.discountPercentage || 0,
+                                        updatedEnrollment.grantData.couponCode || 'N/A'
+                                    );
+                                    ProductionLogger.info('Partial grant enrollment confirmation email sent (retry)', {
+                                        email: customerEmail,
+                                        courseId: metadata.courseId,
+                                        savings: (updatedEnrollment.grantData.originalPrice || 0) - updatedEnrollment.amount
+                                    });
+                                } else {
+                                    // Send regular purchase confirmation
+                                    await sendEmail.coursePurchaseConfirmation(
+                                        customerEmail,
+                                        customerName || 'Student',
+                                        course?.title || metadata.courseId,
+                                        updatedEnrollment.amount,
+                                        new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
+                                    );
+                                    ProductionLogger.info('Enrollment confirmation email sent (retry)', {
+                                        email: customerEmail,
+                                        courseId: metadata.courseId
+                                    });
+                                }
                             } catch (emailError) {
                                 ProductionLogger.error('Failed to send enrollment email (retry)', {
                                     error: emailError instanceof Error ? emailError.message : 'Unknown error',
@@ -502,9 +564,6 @@ export async function POST(req: NextRequest) {
                                     amount: updatedEnrollment.amount,
                                     currency: 'USD',
                                     referral_code: affiliateEmail || undefined,
-                                    original_amount: updatedEnrollment.originalAmount,
-                                    discount_percentage: updatedEnrollment.grantData?.discountPercentage,
-                                    grant_id: updatedEnrollment.grantData?.grantId?.toString(),
                                     enrollmentType: updatedEnrollment.enrollmentType || 'paid_stripe',
                                     originalRequestId: metadata.requestId
                                 },
@@ -650,23 +709,34 @@ async function processAffiliateCommission(enrollment: any, affiliateEmail: strin
         // For partial grants: commissionBaseAmount = discounted price user paid
         const commissionRate = affiliate.commissionRate || 10;
         const basePrice = enrollment.commissionBaseAmount || enrollment.originalAmount || enrollment.amount;
-        const commissionAmount = Math.round((basePrice * commissionRate) / 100 * 100) / 100;
+        const commissionAmount = calculateCommission(basePrice, commissionRate);
 
         console.log(`💰 Commission calculation: $${basePrice} (commission base) × ${commissionRate}% = $${commissionAmount}`);
 
-        // Update enrollment with commission details
-        const enrollmentUpdate = await Enrollment.findByIdAndUpdate(enrollment._id, {
-            $set: {
-                'affiliateData.commissionAmount': commissionAmount,
-                'affiliateData.commissionRate': commissionRate,
-                'affiliateData.commissionProcessed': true,
-                'affiliateData.commissionProcessedAt': new Date()
-            }
-        }, { new: true });
+        // ATOMIC: Check and update commission in single operation to prevent race conditions
+        const enrollmentUpdate = await Enrollment.findOneAndUpdate(
+            {
+                _id: enrollment._id,
+                'affiliateData.commissionProcessed': { $ne: true } // Only update if NOT already processed
+            },
+            {
+                $set: {
+                    'affiliateData.commissionAmount': commissionAmount,
+                    'affiliateData.commissionRate': commissionRate,
+                    'affiliateData.commissionProcessed': true,
+                    'affiliateData.commissionProcessedAt': new Date()
+                }
+            },
+            { new: true }
+        );
 
         if (!enrollmentUpdate) {
-            console.error(`❌ Failed to update enrollment with commission details: ${enrollment._id}`);
-            return;
+            ProductionLogger.info('Commission already processed by concurrent webhook - skipping', {
+                enrollmentId: enrollment._id,
+                affiliateEmail
+            });
+            console.log(`⏭️  Commission already processed for enrollment ${enrollment._id}`);
+            return; // Exit early - another webhook already handled this
         }
 
         console.log(`✅ Updated enrollment ${enrollment._id} with commission: $${commissionAmount}`);

@@ -59,6 +59,27 @@ export interface IAffiliateStats {
     coursesSold: Map<string, number>; // Track sales per course
 }
 
+// ===== PAYOUT DISBURSEMENT RECORD INTERFACE =====
+/**
+ * Complete record of each payout disbursement to affiliate
+ * Provides full audit trail for compliance and transparency
+ */
+export interface IPayoutDisbursement {
+    payoutId: mongoose.Types.ObjectId;           // Reference to PayoutHistory document
+    amount: number;                               // Amount disbursed in this payout
+    currency: string;                             // Currency code (USD, EUR, etc.)
+    payoutMethod: 'bank' | 'paypal' | 'crypto';  // Payment method used
+    transactionId?: string;                       // External transaction reference
+    status: 'completed' | 'pending' | 'failed';  // Disbursement status
+    processedBy: string;                          // Admin email who processed
+    processedAt: Date;                            // When payment was disbursed
+    proofLink?: string;                           // Link to payment proof/receipt
+    adminNotes?: string;                          // Internal notes about payment
+    commissionsCount: number;                     // Number of commissions in this payout
+    periodStart: Date;                            // Start of payout period
+    periodEnd: Date;                              // End of payout period
+}
+
 // ===== AFFILIATE INTERFACE =====
 export interface IAffiliate extends Document {
     affiliateId: string; // Unique affiliate identifier (auto-generated)
@@ -81,6 +102,9 @@ export interface IAffiliate extends Document {
     totalPaid: number; // Total amount paid out so far
     lastPayoutDate?: Date; // Last payout date
     pendingCommissions: number; // Current pending commissions
+
+    // ===== PAYOUT DISBURSEMENT HISTORY =====
+    payoutDisbursements: IPayoutDisbursement[]; // Complete audit trail of all payouts
 
     // Metadata
     createdAt: Date;
@@ -197,6 +221,87 @@ const affiliateStatsSchema = new Schema<IAffiliateStats>({
     coursesSold: { type: Map, of: Number, default: new Map() }
 }, { _id: false });
 
+// ===== PAYOUT DISBURSEMENT SCHEMA =====
+const payoutDisbursementSchema = new Schema<IPayoutDisbursement>({
+    payoutId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'PayoutHistory',
+        required: [true, 'Payout ID is required']
+    },
+    amount: {
+        type: Number,
+        required: [true, 'Amount is required'],
+        min: [0, 'Amount cannot be negative']
+    },
+    currency: {
+        type: String,
+        default: 'USD',
+        uppercase: true,
+        required: true
+    },
+    payoutMethod: {
+        type: String,
+        enum: ['bank', 'paypal', 'crypto'],
+        required: [true, 'Payout method is required']
+    },
+    transactionId: {
+        type: String,
+        trim: true
+    },
+    status: {
+        type: String,
+        enum: ['completed', 'pending', 'failed'],
+        default: 'completed',
+        required: true
+    },
+    processedBy: {
+        type: String,
+        required: [true, 'Processed by is required'],
+        lowercase: true,
+        trim: true
+    },
+    processedAt: {
+        type: Date,
+        required: [true, 'Processed date is required'],
+        default: Date.now
+    },
+    proofLink: {
+        type: String,
+        trim: true,
+        validate: {
+            validator: function (value: string) {
+                if (!value) return true;
+                return /^https?:\/\/.+/.test(value);
+            },
+            message: 'Proof link must be a valid URL'
+        }
+    },
+    adminNotes: {
+        type: String,
+        trim: true,
+        maxlength: [500, 'Admin notes cannot exceed 500 characters']
+    },
+    commissionsCount: {
+        type: Number,
+        required: [true, 'Commissions count is required'],
+        min: [1, 'Must include at least 1 commission']
+    },
+    periodStart: {
+        type: Date,
+        required: [true, 'Period start date is required']
+    },
+    periodEnd: {
+        type: Date,
+        required: [true, 'Period end date is required'],
+        validate: {
+            validator: function (this: IPayoutDisbursement, value: Date) {
+                return value >= this.periodStart;
+            },
+            message: 'Period end must be after period start'
+        }
+    }
+}, { _id: false, timestamps: false });
+
 // ===== AFFILIATE SCHEMA =====
 const affiliateSchema = new Schema<IAffiliate>({
     affiliateId: {
@@ -270,6 +375,24 @@ const affiliateSchema = new Schema<IAffiliate>({
         min: [0, 'Pending commissions cannot be negative']
     },
 
+    // ===== PAYOUT DISBURSEMENT HISTORY =====
+    payoutDisbursements: {
+        type: [payoutDisbursementSchema],
+        default: [],
+        validate: {
+            validator: function (disbursements: IPayoutDisbursement[]) {
+                // Validate that total of disbursements matches totalPaid
+                // This ensures data integrity
+                const totalDisbursed = disbursements
+                    .filter(d => d.status === 'completed')
+                    .reduce((sum, d) => sum + d.amount, 0);
+                // Allow small floating point differences (within 1 cent)
+                return Math.abs(totalDisbursed - (this as any).totalPaid) < 0.01;
+            },
+            message: 'Total disbursements must match totalPaid amount'
+        }
+    },
+
     lastLoginAt: Date
 }, {
     timestamps: true,
@@ -281,6 +404,11 @@ const affiliateSchema = new Schema<IAffiliate>({
 affiliateSchema.index({ userId: 1 });
 affiliateSchema.index({ status: 1 });
 affiliateSchema.index({ createdAt: -1 });
+// Payout-related indexes for financial reporting
+affiliateSchema.index({ 'payoutDisbursements.processedAt': -1 });
+affiliateSchema.index({ 'payoutDisbursements.status': 1 });
+affiliateSchema.index({ totalPaid: -1 }); // Sort by total earnings
+affiliateSchema.index({ pendingCommissions: -1 }); // Find affiliates with pending payouts
 
 // ===== STATIC METHODS =====
 affiliateSchema.statics.findByEmail = function (email: string) {
@@ -324,8 +452,9 @@ affiliateSchema.statics.updateStatsFromEnrollments = async function (affiliateEm
         const affiliate = await this.findOne({ email: affiliateEmail.toLowerCase() });
         const commissionRate = affiliate?.commissionRate || 10;
 
-        // ===== FIX FLOATING POINT PRECISION =====
-        const totalEarnings = Math.round((totalRevenue * commissionRate) / 100 * 100) / 100;
+        // Import centralized commission calculation
+        const { calculateCommission } = require('../utils/commission');
+        const totalEarnings = calculateCommission(totalRevenue, commissionRate);
 
         console.log('💰 Calculated earnings:', {
             totalRevenue,

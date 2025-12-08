@@ -169,7 +169,38 @@ const enrollmentSchema = new mongoose.Schema<IEnrollment>({
         commissionAmount: {
             type: Number,
             min: 0,
-            default: 0
+            default: 0,
+            validate: {
+                validator: function (value: number) {
+                    // Ensure monetary precision (max 2 decimal places)
+                    return Number.isInteger(value * 100);
+                },
+                message: 'Commission amount must have at most 2 decimal places'
+            }
+        },
+        commissionRate: {
+            type: Number,
+            min: 0,
+            max: 100,
+            default: 10  // Default 10% commission
+        },
+        commissionProcessed: {
+            type: Boolean,
+            default: false
+        },
+        commissionProcessedAt: {
+            type: Date
+        },
+        commissionPaid: {
+            type: Boolean,
+            default: false
+        },
+        paidAt: {
+            type: Date
+        },
+        payoutId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'PayoutHistory'
         }
     },
 
@@ -189,6 +220,29 @@ const enrollmentSchema = new mongoose.Schema<IEnrollment>({
         grantVerified: {
             type: Boolean,
             default: false
+        },
+        discountPercentage: {
+            type: Number,
+            min: 0,
+            max: 100,
+            default: 100
+        },
+        originalPrice: {
+            type: Number,
+            min: 0
+        },
+        finalPrice: {
+            type: Number,
+            min: 0
+        },
+        discountAmount: {
+            type: Number,
+            min: 0
+        },
+        grantType: {
+            type: String,
+            enum: ['full_grant', 'partial_grant'],
+            default: 'full_grant'
         }
     },
 

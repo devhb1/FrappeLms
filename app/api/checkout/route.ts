@@ -38,6 +38,7 @@ import { sendEmail } from '@/lib/emails'
 import { z } from 'zod'
 import ProductionLogger from '@/lib/utils/production-logger'
 import { checkoutRateLimit } from '@/lib/middleware/rateLimit'
+import { calculateCommission } from '@/lib/services'
 
 // ===== REQUEST VALIDATION =====
 const checkoutSchema = z.object({
@@ -493,6 +494,30 @@ async function processCouponEnrollment(data: any) {
     });
     ProductionLogger.info('Grant linked to enrollment');
 
+    // Helper function to rollback grant reservation
+    const rollbackGrantReservation = async () => {
+        try {
+            await Grant.findByIdAndUpdate(reservedGrant._id, {
+                $unset: {
+                    couponUsed: 1,
+                    couponUsedAt: 1,
+                    couponUsedBy: 1,
+                    reservedAt: 1,
+                    enrollmentId: 1
+                }
+            });
+            ProductionLogger.warn('Grant reservation rolled back', {
+                grantId: reservedGrant._id,
+                couponCode: reservedGrant.couponCode
+            });
+        } catch (rollbackError) {
+            ProductionLogger.error('Failed to rollback grant reservation', {
+                grantId: reservedGrant._id,
+                error: rollbackError instanceof Error ? rollbackError.message : 'Unknown'
+            });
+        }
+    };
+
     // 6.5. ===== FRAPPE LMS INTEGRATION =====
     // Enroll in FrappeLMS immediately for free enrollments
     try {
@@ -507,12 +532,7 @@ async function processCouponEnrollment(data: any) {
             payment_id: savedEnrollment.paymentId,
             amount: 0,
             currency: 'USD',
-            referral_code: data.affiliateEmail || undefined,
-            // Grant metadata for Frappe LMS tracking
-            original_amount: course.price || 0,
-            discount_percentage: discountPercentage,
-            grant_id: reservedGrant._id.toString(),
-            enrollment_type: 'free_grant'
+            referral_code: data.affiliateEmail || undefined
         });
 
         if (frappeResult.success) {
@@ -529,6 +549,26 @@ async function processCouponEnrollment(data: any) {
             ProductionLogger.info('FrappeLMS enrollment successful (free)', {
                 enrollmentId: frappeResult.enrollment_id
             });
+
+            // Send grant enrollment confirmation email ONLY after Frappe success
+            try {
+                await sendEmail.grantCourseEnrollment(
+                    email.toLowerCase(),
+                    email.split('@')[0],
+                    course.title,
+                    new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }),
+                    originalPrice
+                );
+                ProductionLogger.info('Grant enrollment confirmation email sent', {
+                    email: email.toLowerCase(),
+                    courseId: courseId
+                });
+            } catch (emailError) {
+                ProductionLogger.error('Failed to send grant enrollment email', {
+                    error: emailError instanceof Error ? emailError.message : 'Unknown error',
+                    email: email.toLowerCase()
+                });
+            }
         } else {
             // Queue for background retry instead of blocking user (improved UX)
             ProductionLogger.warn('First Frappe attempt failed, queuing for immediate background retry...', {
@@ -547,10 +587,7 @@ async function processCouponEnrollment(data: any) {
                     amount: 0,
                     currency: 'USD',
                     referral_code: data.affiliateEmail || undefined,
-                    original_amount: course.price || 0,
-                    discount_percentage: discountPercentage,
-                    grant_id: reservedGrant._id.toString(),
-                    enrollment_type: 'free_grant'
+                    enrollmentType: 'free_grant'
                 },
                 nextRetryAt: new Date(Date.now() + 5000), // Retry in 5 seconds
                 maxAttempts: 5 // Explicit retry limit
@@ -595,11 +632,7 @@ async function processCouponEnrollment(data: any) {
                     payment_id: savedEnrollment.paymentId,
                     amount: 0,
                     currency: 'USD',
-                    referral_code: data.affiliateEmail || undefined,
-                    original_amount: course.price || 0,
-                    discount_percentage: discountPercentage,
-                    grant_id: reservedGrant._id.toString(),
-                    enrollment_type: 'free_grant'
+                    referral_code: data.affiliateEmail || undefined
                 },
                 nextRetryAt: new Date(Date.now() + 2 * 60 * 1000)
             });
@@ -642,31 +675,8 @@ async function processCouponEnrollment(data: any) {
         discountApplied: `${discountPercentage}%`
     });
 
-    // 8. Send grant course enrollment confirmation email
-    try {
-        const customerName = email.split('@')[0];
-        const enrollmentDate = new Date().toLocaleDateString('en-US', {
-            year: 'numeric',
-            month: 'long',
-            day: 'numeric'
-        });
-
-        ProductionLogger.info('Sending grant course enrollment email', { email });
-
-        await sendEmail.grantCourseEnrollment(
-            email.toLowerCase(),
-            customerName,
-            course.title,
-            enrollmentDate,
-            originalPrice // Will update email template later to handle discount details
-        );
-
-        ProductionLogger.info('Grant course enrollment email sent successfully');
-    } catch (emailError) {
-        ProductionLogger.error('Failed to send grant course enrollment email', {
-            error: emailError instanceof Error ? emailError.message : 'Unknown error'
-        });
-    }
+    // NOTE: Email is sent inside Frappe success block (line ~555)
+    // No need to send duplicate email here - email already sent when Frappe enrollment succeeds
 
     return NextResponse.json({
         success: true,
@@ -705,7 +715,7 @@ async function processStripeCheckout(data: any) {
             affiliateEmail: affiliate.email,
             commissionEligible: true,
             commissionRate: affiliate.commissionRate || 10,
-            commissionAmount: Math.round((course.price * (affiliate.commissionRate || 10)) / 100 * 100) / 100,
+            commissionAmount: calculateCommission(course.price, affiliate.commissionRate || 10),
             referralSource: 'affiliate_link'
         } : null,
 
@@ -729,7 +739,7 @@ async function processStripeCheckout(data: any) {
 
     // 2. Record affiliate activity immediately for tracking (even for pending payments)
     if (affiliate) {
-        const commissionAmount = Math.round((course.price * (affiliate.commissionRate || 10)) / 100 * 100) / 100;
+        const commissionAmount = calculateCommission(course.price, affiliate.commissionRate || 10);
         ProductionLogger.info('Recording affiliate activity', {
             affiliateEmail: affiliate.email,
             commissionAmount: commissionAmount
@@ -865,8 +875,7 @@ async function processPartialDiscountCheckout(data: any) {
                 couponUsed: true,
                 couponUsedAt: new Date(),
                 couponUsedBy: email.toLowerCase(),
-                reservedAt: new Date(),
-                reservationExpiresAt: new Date(Date.now() + 30 * 60 * 1000) // 30min for Stripe checkout
+                reservedAt: new Date()
             }
         },
         { new: true }
@@ -886,8 +895,7 @@ async function processPartialDiscountCheckout(data: any) {
 
     ProductionLogger.info('Partial grant coupon atomically reserved', {
         grantId: reservedGrant._id,
-        email,
-        expiresAt: reservedGrant.reservationExpiresAt
+        email
     });
 
     // 2. Find or create affiliate for commission tracking
@@ -964,68 +972,114 @@ async function processPartialDiscountCheckout(data: any) {
 
     const savedEnrollment = await enrollment.save();
 
-    // 3. Create Stripe checkout session with discounted price
-    const session = await stripe.checkout.sessions.create({
-        payment_method_types: ['card'],
-        line_items: [{
-            price_data: {
-                currency: 'usd',
-                product_data: {
-                    name: `${course.title} (${discountPercentage}% Grant Discount Applied)`,
-                    description: `Original Price: $${originalPrice} | Discount: ${discountPercentage}% ($${discountAmount}) | Final Price: $${finalPrice}`,
-                    images: course.image ? [course.image] : undefined,
+    // 3. Create Stripe checkout session with discounted price (with rollback on failure)
+    try {
+        const session = await stripe.checkout.sessions.create({
+            payment_method_types: ['card'],
+            line_items: [{
+                price_data: {
+                    currency: 'usd',
+                    product_data: {
+                        name: `${course.title} (${discountPercentage}% Grant Discount Applied)`,
+                        description: `Original Price: $${originalPrice} | Discount: ${discountPercentage}% ($${discountAmount}) | Final Price: $${finalPrice}`,
+                        images: course.image ? [course.image] : undefined,
+                    },
+                    unit_amount: Math.round(finalPrice * 100), // Convert to cents
                 },
-                unit_amount: Math.round(finalPrice * 100), // Convert to cents
-            },
-            quantity: 1,
-        }],
-        mode: 'payment',
-        success_url: `${process.env.NEXT_PUBLIC_APP_URL}/success?session_id={CHECKOUT_SESSION_ID}&grant_discount=${discountPercentage}`,
-        cancel_url: `${process.env.NEXT_PUBLIC_APP_URL}/cancel?enrollment_id=${savedEnrollment._id}`,
-        customer_email: email,
-        metadata: {
-            courseId: courseId,
-            email: email,
+                quantity: 1,
+            }],
+            mode: 'payment',
+            success_url: `${process.env.NEXT_PUBLIC_APP_URL}/success?session_id={CHECKOUT_SESSION_ID}&grant_discount=${discountPercentage}`,
+            cancel_url: `${process.env.NEXT_PUBLIC_APP_URL}/cancel?enrollment_id=${savedEnrollment._id}`,
+            customer_email: email,
+            metadata: {
+                courseId: courseId,
+                email: email,
+                enrollmentId: savedEnrollment._id.toString(),
+                affiliateEmail: affiliate?.email || '',
+                redirectSource: data.redirectSource,
+                grantId: String(reservedGrant._id),
+                discountPercentage: discountPercentage.toString(),
+                originalPrice: originalPrice.toString(),
+                finalPrice: finalPrice.toString(),
+                enrollmentType: 'partial_grant'
+            }
+        });
+
+        // 4. Update enrollment with Stripe session ID
+        await Enrollment.findByIdAndUpdate(savedEnrollment._id, {
+            stripeSessionId: session.id,
+            paymentId: `STRIPE_PARTIAL_${session.id}`
+        });
+
+        ProductionLogger.info('Partial discount Stripe session created', {
+            sessionId: session.id,
+            originalPrice,
+            finalPrice,
+            discountPercentage
+        });
+
+        return NextResponse.json({
+            checkoutUrl: session.url,
+            sessionId: session.id,
             enrollmentId: savedEnrollment._id.toString(),
-            affiliateEmail: affiliate?.email || '',
-            redirectSource: data.redirectSource,
-            grantId: reservedGrant._id.toString(),
-            discountPercentage: discountPercentage.toString(),
-            originalPrice: originalPrice.toString(),
-            finalPrice: finalPrice.toString(),
-            enrollmentType: 'partial_grant'
+            course: {
+                title: course.title,
+                originalPrice: originalPrice,
+                finalPrice: finalPrice,
+                discountPercentage: discountPercentage,
+                discountAmount: discountAmount
+            },
+            grant: {
+                couponCode: reservedGrant.couponCode,
+                grantType: 'partial'
+            }
+        });
+
+    } catch (stripeError) {
+        // ROLLBACK: Release grant coupon reservation
+        ProductionLogger.error('Stripe session creation failed, initiating rollback', {
+            error: stripeError instanceof Error ? stripeError.message : 'Unknown',
+            grantId: reservedGrant._id,
+            enrollmentId: savedEnrollment._id
+        });
+
+        try {
+            // Rollback grant reservation atomically
+            await Grant.findByIdAndUpdate(reservedGrant._id, {
+                $unset: {
+                    couponUsed: 1,
+                    couponUsedAt: 1,
+                    couponUsedBy: 1,
+                    reservedAt: 1
+                }
+            });
+
+            // Delete pending enrollment record
+            await Enrollment.findByIdAndDelete(savedEnrollment._id);
+
+            ProductionLogger.info('Rollback completed successfully', {
+                grantId: reservedGrant._id,
+                couponCode: reservedGrant.couponCode
+            });
+        } catch (rollbackError) {
+            // Log rollback failure but don't expose to user
+            ProductionLogger.error('Rollback failed - manual intervention required', {
+                grantId: reservedGrant._id,
+                enrollmentId: savedEnrollment._id,
+                originalError: stripeError instanceof Error ? stripeError.message : 'Unknown',
+                rollbackError: rollbackError instanceof Error ? rollbackError.message : 'Unknown'
+            });
         }
-    });
 
-    // 4. Update enrollment with Stripe session ID
-    await Enrollment.findByIdAndUpdate(savedEnrollment._id, {
-        stripeSessionId: session.id,
-        paymentId: `STRIPE_PARTIAL_${session.id}`
-    });
-
-    ProductionLogger.info('Partial discount Stripe session created', {
-        sessionId: session.id,
-        originalPrice,
-        finalPrice,
-        discountPercentage
-    });
-
-    return NextResponse.json({
-        checkoutUrl: session.url,
-        sessionId: session.id,
-        enrollmentId: savedEnrollment._id.toString(),
-        course: {
-            title: course.title,
-            originalPrice: originalPrice,
-            finalPrice: finalPrice,
-            discountPercentage: discountPercentage,
-            discountAmount: discountAmount
-        },
-        grant: {
-            couponCode: reservedGrant.couponCode,
-            grantType: 'partial'
-        }
-    });
+        // Return user-friendly error
+        return NextResponse.json({
+            error: 'Unable to create payment session. Please try again.',
+            code: 'STRIPE_SESSION_FAILED',
+            retryable: true,
+            details: stripeError instanceof Error ? stripeError.message : 'Unknown error'
+        }, { status: 500 });
+    }
 }
 
 export async function GET() {

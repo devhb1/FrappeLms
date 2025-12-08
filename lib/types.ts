@@ -44,6 +44,12 @@ export interface CourseEnrollment {
         utmMedium?: string
         utmCampaign?: string
         commissionRate?: number
+        // Payout tracking fields (sync with enrollment model)
+        commissionProcessed?: boolean
+        commissionProcessedAt?: Date
+        commissionPaid?: boolean
+        paidAt?: Date
+        payoutId?: string
     }
 
     // Grant/coupon data - enhanced for partial discounts

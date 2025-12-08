@@ -67,7 +67,7 @@ export async function POST(request: NextRequest) {
         }
 
         // If the grant doesn't have discount percentage set, default based on coupon code pattern
-        if (!grant.discountPercentage) {
+        if (!grant.discountPercentage && grant.couponCode) {
             // Try to extract discount from coupon code pattern like GRANT50-xxx
             const match = grant.couponCode.match(/GRANT(\d+)-/);
             if (match) {

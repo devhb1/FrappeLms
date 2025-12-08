@@ -132,11 +132,7 @@ async function retryEnrollment(enrollment: any) {
             payment_id: enrollment.paymentId,
             amount: enrollment.amount,
             currency: enrollment.currency || 'USD',
-            referral_code: enrollment.affiliateData?.affiliateEmail || undefined,
-            original_amount: enrollment.originalAmount,
-            discount_percentage: enrollment.grantData?.discountPercentage,
-            grant_id: enrollment.grantData?.grantId?.toString(),
-            enrollment_type: enrollment.enrollmentType
+            referral_code: enrollment.affiliateData?.affiliateEmail || undefined
         });
 
         if (frappeResult.success) {

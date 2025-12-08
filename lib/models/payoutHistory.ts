@@ -44,6 +44,10 @@ export interface IPayoutHistory extends Document {
     commissionsPaid: ICommissionPaid[];
     commissionsCount: number;
 
+    // Payout period
+    periodStart: Date;
+    periodEnd: Date;
+
     // Audit fields
     createdAt: Date;
     updatedAt: Date;
@@ -101,18 +105,29 @@ const payoutHistorySchema = new Schema<IPayoutHistory>({
     amount: {
         type: Number,
         required: [true, 'Payout amount is required'],
-        min: [0.01, 'Payout amount must be positive']
+        min: [0.01, 'Payout amount must be positive'],
+        validate: {
+            validator: function (value: number) {
+                // Ensure monetary precision (max 2 decimal places)
+                return Number.isInteger(value * 100);
+            },
+            message: 'Amount must have at most 2 decimal places'
+        }
     },
     payoutMethod: {
         type: String,
         required: [true, 'Payout method is required'],
-        enum: ['paypal', 'bank', 'crypto'],
+        enum: {
+            values: ['paypal', 'bank', 'crypto'],
+            message: 'Payout method must be paypal, bank, or crypto'
+        },
         lowercase: true
     },
     currency: {
         type: String,
         default: 'USD',
-        uppercase: true
+        uppercase: true,
+        match: [/^[A-Z]{3}$/, 'Currency must be a valid 3-letter code']
     },
 
     // ===== TRANSACTION TRACKING =====
@@ -171,7 +186,29 @@ const payoutHistorySchema = new Schema<IPayoutHistory>({
     commissionsCount: {
         type: Number,
         required: true,
-        min: 1
+        min: 1,
+        validate: {
+            validator: function (this: IPayoutHistory, value: number) {
+                return value === this.commissionsPaid?.length;
+            },
+            message: 'Commissions count must match number of commissions paid'
+        }
+    },
+
+    // ===== PAYOUT PERIOD TRACKING =====
+    periodStart: {
+        type: Date,
+        required: [true, 'Payout period start date is required']
+    },
+    periodEnd: {
+        type: Date,
+        required: [true, 'Payout period end date is required'],
+        validate: {
+            validator: function (this: IPayoutHistory, value: Date) {
+                return value >= this.periodStart;
+            },
+            message: 'Period end must be after or equal to period start'
+        }
     }
 }, {
     timestamps: true,
@@ -267,7 +304,12 @@ payoutHistorySchema.statics.getMonthlySummary = function (year: number) {
 };
 
 // ===== MODEL EXPORT =====
-export const PayoutHistory = mongoose.models.PayoutHistory ||
-    mongoose.model<IPayoutHistory>('PayoutHistory', payoutHistorySchema);
+
+// Clear existing model to prevent "Cannot overwrite model" errors
+if (mongoose.models.PayoutHistory) {
+    delete mongoose.models.PayoutHistory;
+}
+
+export const PayoutHistory = mongoose.model<IPayoutHistory>('PayoutHistory', payoutHistorySchema);
 
 export default PayoutHistory;

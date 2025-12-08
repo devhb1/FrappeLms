@@ -87,7 +87,7 @@ export class UserService {
 
             // Update course enrollment
             course.enrolledUsers.push({
-                userId: user._id,
+                userId: user._id as any,
                 email: user.email,
                 enrolledAt: new Date(),
                 paymentId
@@ -139,7 +139,7 @@ export class UserService {
                 throw new Error('Course not found in user purchases');
             }
 
-            if (course.progress < 100) {
+            if ((course.progress || 0) < 100) {
                 throw new Error('Course not completed yet');
             }
 

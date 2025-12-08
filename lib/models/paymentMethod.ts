@@ -211,6 +211,12 @@ paymentMethodSchema.index({ userId: 1, isActive: 1 });
 paymentMethodSchema.index({ userId: 1, type: 1 });
 
 // ===== MODEL EXPORT =====
-export const PaymentMethod = mongoose.models.PaymentMethod || mongoose.model<IPaymentMethod>('PaymentMethod', paymentMethodSchema);
+
+// Clear existing model to prevent "Cannot overwrite model" errors
+if (mongoose.models.PaymentMethod) {
+    delete mongoose.models.PaymentMethod;
+}
+
+export const PaymentMethod = mongoose.model<IPaymentMethod>('PaymentMethod', paymentMethodSchema);
 export const paymentMethodModel = PaymentMethod;
 export default PaymentMethod;
