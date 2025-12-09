@@ -401,7 +401,7 @@ export async function POST(req: NextRequest) {
                         });
                         console.log(`✅ FrappeLMS enrollment completed: ${frappeResult.enrollment_id}`);
 
-                        // Send success email notification (with proper template for partial grants)
+                        // ===== SEND EMAIL ONLY AFTER SUCCESSFUL FRAPPE ENROLLMENT =====
                         try {
                             const course = await getCourseFromDb(metadata.courseId);
 
@@ -504,7 +504,7 @@ export async function POST(req: NextRequest) {
                                 }
                             }
 
-                            // Send success email notification (with proper template for partial grants)
+                            // ===== SEND EMAIL AFTER SUCCESSFUL RETRY =====
                             try {
                                 const course = await getCourseFromDb(metadata.courseId);
 
@@ -521,7 +521,7 @@ export async function POST(req: NextRequest) {
                                         updatedEnrollment.grantData.discountPercentage || 0,
                                         updatedEnrollment.grantData.couponCode || 'N/A'
                                     );
-                                    ProductionLogger.info('Partial grant enrollment confirmation email sent (retry)', {
+                                    ProductionLogger.info('Partial grant enrollment confirmation email sent (after retry)', {
                                         email: customerEmail,
                                         courseId: metadata.courseId,
                                         savings: (updatedEnrollment.grantData.originalPrice || 0) - updatedEnrollment.amount
@@ -535,13 +535,13 @@ export async function POST(req: NextRequest) {
                                         updatedEnrollment.amount,
                                         new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
                                     );
-                                    ProductionLogger.info('Enrollment confirmation email sent (retry)', {
+                                    ProductionLogger.info('Enrollment confirmation email sent (after retry)', {
                                         email: customerEmail,
                                         courseId: metadata.courseId
                                     });
                                 }
                             } catch (emailError) {
-                                ProductionLogger.error('Failed to send enrollment email (retry)', {
+                                ProductionLogger.error('Failed to send enrollment email (after retry)', {
                                     error: emailError instanceof Error ? emailError.message : 'Unknown error',
                                     email: customerEmail
                                 });

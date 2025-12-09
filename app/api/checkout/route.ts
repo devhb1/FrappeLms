@@ -46,7 +46,6 @@ const checkoutSchema = z.object({
     email: z.string().email('Valid email required').toLowerCase().optional(),
     couponCode: z.string().optional(),
     affiliateEmail: z.string().email('Valid affiliate email required').toLowerCase().optional().or(z.literal('')),
-    username: z.string().optional(),
     redirectSource: z.enum(['lms_redirect', 'direct', 'affiliate']).optional(),
     requestId: z.string().optional()
 });
@@ -73,14 +72,13 @@ export async function POST(request: NextRequest) {
             email: body.email?.trim() || '',
             couponCode: body.couponCode?.trim() || '',
             affiliateEmail: body.affiliateEmail?.trim() || '',
-            username: body.username?.trim() || '', // Frappe LMS username
             requestId: body.requestId?.trim() || ''
         };
 
         ProductionLogger.debug('Cleaned request body', { cleanedKeys: Object.keys(cleanedBody) });
 
         const validatedData = checkoutSchema.parse(cleanedBody);
-        const { courseId, email, couponCode, affiliateEmail, username, redirectSource, requestId } = validatedData;
+        const { courseId, email, couponCode, affiliateEmail, redirectSource, requestId } = validatedData;
 
         // 3. Resolve final email with fallbacks
         const finalEmail = (email && email.trim()) || `temp_${Date.now()}@placeholder.com`;

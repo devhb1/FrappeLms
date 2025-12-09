@@ -167,6 +167,53 @@ export async function POST(request: NextRequest) {
                         processingTimeMs: processingTime
                     });
 
+                    // ===== SEND CONFIRMATION EMAIL AFTER SUCCESSFUL RETRY =====
+                    try {
+                        const { default: sendEmail } = await import('@/lib/emails');
+                        const { getCourseFromDb } = await import('@/lib/services/course');
+
+                        // Get enrollment details for email
+                        const enrollment = await Enrollment.findById(job.enrollmentId);
+                        if (enrollment) {
+                            const course = await getCourseFromDb(job.payload.course_id);
+
+                            // Check if this is a partial grant enrollment
+                            if (enrollment.enrollmentType === 'partial_grant' && enrollment.grantData) {
+                                await sendEmail.partialGrantEnrollment(
+                                    job.payload.user_email,
+                                    'Student',
+                                    course?.title || job.payload.course_id,
+                                    new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }),
+                                    enrollment.grantData.originalPrice || enrollment.amount,
+                                    enrollment.amount,
+                                    enrollment.grantData.discountPercentage || 0,
+                                    enrollment.grantData.couponCode || 'N/A'
+                                );
+                            } else {
+                                await sendEmail.coursePurchaseConfirmation(
+                                    job.payload.user_email,
+                                    'Student',
+                                    course?.title || job.payload.course_id,
+                                    enrollment.amount,
+                                    new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
+                                );
+                            }
+
+                            ProductionLogger.info('Confirmation email sent after retry success', {
+                                email: job.payload.user_email,
+                                enrollmentId: job.enrollmentId,
+                                jobId: job._id
+                            });
+                        }
+                    } catch (emailError) {
+                        // Email failure should not fail the retry job
+                        ProductionLogger.warn('Failed to send confirmation email after retry', {
+                            error: emailError instanceof Error ? emailError.message : 'Unknown',
+                            enrollmentId: job.enrollmentId,
+                            email: job.payload.user_email
+                        });
+                    }
+
                 } else {
                     throw new Error(result.error || 'Unknown FrappeLMS error');
                 }

@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { CheckCircle, XCircle, Loader2, AlertCircle, RefreshCw } from 'lucide-react'
+import { CheckCircle, XCircle, Loader2, AlertCircle, RefreshCw, ExternalLink } from 'lucide-react'
 
 interface CheckoutProgressProps {
     courseId: string
@@ -32,6 +32,7 @@ export default function EnhancedCheckoutFlow({
     onError
 }: CheckoutProgressProps) {
     const [steps, setSteps] = useState<CheckoutStep[]>([
+        { id: 'verify', label: 'Verifying Frappe LMS user', status: 'pending' },
         { id: 'validation', label: 'Validating request', status: 'pending' },
         { id: 'coupon', label: 'Processing coupon', status: 'pending' },
         { id: 'enrollment', label: 'Creating enrollment', status: 'pending' },
@@ -42,6 +43,11 @@ export default function EnhancedCheckoutFlow({
     const [isProcessing, setIsProcessing] = useState(false)
     const [retryCount, setRetryCount] = useState(0)
     const [requestId, setRequestId] = useState<string | null>(null)
+    const [userVerified, setUserVerified] = useState(false)
+    const [frappeUser, setFrappeUser] = useState<any>(null)
+    const [showRegistrationPrompt, setShowRegistrationPrompt] = useState(false)
+    const [registrationUrl, setRegistrationUrl] = useState<string>('')
+    const [showWelcomeMessage, setShowWelcomeMessage] = useState(false)
 
     const updateStepStatus = (stepId: string, status: CheckoutStep['status'], error?: string) => {
         setSteps(prev => prev.map(step =>
@@ -54,6 +60,59 @@ export default function EnhancedCheckoutFlow({
         return (completedSteps / steps.length) * 100
     }
 
+    const verifyFrappeUser = async () => {
+        try {
+            updateStepStatus('verify', 'loading')
+
+            const response = await fetch('/api/verify-frappe-user', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ email: email.toLowerCase() })
+            })
+
+            const result = await response.json()
+
+            if (!response.ok) {
+                throw new Error(result.error || 'Verification failed')
+            }
+
+            if (result.exists) {
+                setFrappeUser(result.user)
+                setUserVerified(true)
+                setShowWelcomeMessage(true)
+                updateStepStatus('verify', 'completed')
+                return true
+            } else {
+                // User doesn't exist, show registration prompt
+                setRegistrationUrl(result.registrationUrl || 'https://lms.maaledu.com/signup')
+                setShowRegistrationPrompt(true)
+                updateStepStatus('verify', 'error', 'Frappe LMS account required')
+                return false
+            }
+        } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Verification failed'
+            updateStepStatus('verify', 'error', errorMessage)
+            return false
+        }
+    }
+
+    const handleRegistrationRedirect = () => {
+        window.open(registrationUrl, '_blank')
+    }
+
+    const handleRetryVerification = () => {
+        // Reset all verification-related states
+        setShowRegistrationPrompt(false)
+        setUserVerified(false)
+        setFrappeUser(null)
+        setShowWelcomeMessage(false)
+        // Reset the verify step to pending
+        updateStepStatus('verify', 'pending')
+        // Don't automatically start - user needs to click Start Enrollment again
+    }
+
     const processCheckout = async (isRetry: boolean = false) => {
         if (isProcessing) return
 
@@ -64,8 +123,18 @@ export default function EnhancedCheckoutFlow({
         if (!requestId) setRequestId(currentRequestId)
 
         try {
-            // Step 1: Validation
-            setCurrentStep(0)
+            // Step 1: Verify Frappe User (NEW - Pre-payment verification)
+            if (!userVerified) {
+                setCurrentStep(0)
+                const verified = await verifyFrappeUser()
+                if (!verified) {
+                    setIsProcessing(false)
+                    return // Stop here if user doesn't exist
+                }
+            }
+
+            // Step 2: Validation
+            setCurrentStep(1)
             updateStepStatus('validation', 'loading')
 
             await new Promise(resolve => setTimeout(resolve, 500)) // Visual feedback
@@ -76,8 +145,8 @@ export default function EnhancedCheckoutFlow({
 
             updateStepStatus('validation', 'completed')
 
-            // Step 2: Coupon Processing (if applicable)
-            setCurrentStep(1)
+            // Step 3: Coupon Processing (if applicable)
+            setCurrentStep(2)
             if (couponCode) {
                 updateStepStatus('coupon', 'loading')
                 await new Promise(resolve => setTimeout(resolve, 300))
@@ -86,8 +155,8 @@ export default function EnhancedCheckoutFlow({
                 updateStepStatus('coupon', 'completed') // Skip if no coupon
             }
 
-            // Step 3: Enrollment Creation
-            setCurrentStep(2)
+            // Step 4: Enrollment Creation
+            setCurrentStep(3)
             updateStepStatus('enrollment', 'loading')
 
             const checkoutRequest = {
@@ -117,8 +186,8 @@ export default function EnhancedCheckoutFlow({
 
             updateStepStatus('enrollment', 'completed')
 
-            // Step 4: Payment Processing
-            setCurrentStep(3)
+            // Step 5: Payment Processing
+            setCurrentStep(4)
             updateStepStatus('payment', 'loading')
 
             if (result.directEnrollment) {
@@ -170,6 +239,11 @@ export default function EnhancedCheckoutFlow({
     const handleRetry = () => {
         if (retryCount < 3) {
             setRetryCount(prev => prev + 1)
+            // Reset verification state to ensure it runs again
+            setUserVerified(false)
+            setShowRegistrationPrompt(false)
+            setFrappeUser(null)
+            setShowWelcomeMessage(false)
             // Reset failed steps
             setSteps(prev => prev.map(step =>
                 step.status === 'error' ? { ...step, status: 'pending', error: undefined } : step
@@ -213,6 +287,17 @@ export default function EnhancedCheckoutFlow({
                     <Progress value={getProgressPercentage()} className="h-2" />
                 </div>
 
+                {/* Welcome Message */}
+                {showWelcomeMessage && frappeUser && (
+                    <div className="bg-green-50 border border-green-200 rounded-md p-3 flex items-center space-x-2">
+                        <CheckCircle className="h-5 w-5 text-green-600 flex-shrink-0" />
+                        <div className="text-sm text-green-800">
+                            <span className="font-medium">Welcome back, {frappeUser.fullName || frappeUser.username}!</span>
+                            <span className="block text-xs text-green-700 mt-0.5">Your Frappe LMS account has been verified.</span>
+                        </div>
+                    </div>
+                )}
+
                 {/* Steps */}
                 <div className="space-y-3">
                     {steps.map((step, index) => (
@@ -230,7 +315,7 @@ export default function EnhancedCheckoutFlow({
                 </div>
 
                 {/* Error Message & Retry */}
-                {hasErrors && (
+                {hasErrors && !showRegistrationPrompt && (
                     <Alert variant="destructive">
                         <AlertCircle className="h-4 w-4" />
                         <AlertDescription>
@@ -239,6 +324,41 @@ export default function EnhancedCheckoutFlow({
                             <span className="block mt-2 text-xs text-gray-700 dark:text-gray-300">
                                 If you used a coupon, please double-check it is correct, unused, and valid for this course. If issues persist, contact support or try again later.
                             </span>
+                        </AlertDescription>
+                    </Alert>
+                )}
+
+                {/* Registration Prompt */}
+                {showRegistrationPrompt && (
+                    <Alert className="border-orange-500 bg-orange-50">
+                        <AlertCircle className="h-4 w-4 text-orange-500" />
+                        <AlertDescription>
+                            <div className="space-y-2">
+                                <p className="font-medium text-orange-900">Frappe LMS Account Required</p>
+                                <p className="text-sm text-orange-800">
+                                    You need a Frappe LMS account to complete enrollment. Please register first, then return to complete your purchase.
+                                </p>
+                                <div className="flex gap-2 mt-2">
+                                    <Button
+                                        onClick={handleRegistrationRedirect}
+                                        variant="outline"
+                                        className="flex-1 border-orange-500 text-orange-700 hover:bg-orange-100"
+                                    >
+                                        Register on Frappe LMS <ExternalLink className="ml-2 h-4 w-4" />
+                                    </Button>
+                                    <Button
+                                        onClick={handleRetryVerification}
+                                        variant="outline"
+                                        className="flex-1 border-green-500 text-green-700 hover:bg-green-100"
+                                    >
+                                        <RefreshCw className="mr-2 h-4 w-4" />
+                                        Already Registered?
+                                    </Button>
+                                </div>
+                                <p className="text-xs text-orange-700 mt-2">
+                                    After registering on Frappe LMS, click "Already Registered?" to verify your account.
+                                </p>
+                            </div>
                         </AlertDescription>
                     </Alert>
                 )}

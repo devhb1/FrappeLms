@@ -345,7 +345,133 @@ export async function getFrappeCourseInfo(courseId: string): Promise<FrappeCours
 }
 
 /**
- * Test FrappeLMS connection
+ * Check if user exists in Frappe LMS
+ * Used for pre-payment verification to ensure user has an account
+ * 
+ * @param email - User email to verify
+ * @returns Promise with user existence status
+ */
+export interface FrappeUserCheckResponse {
+    success: boolean;
+    exists: boolean;
+    user?: {
+        email: string;
+        full_name?: string;
+        username?: string;
+    };
+    registration_url?: string;
+    error?: string;
+}
+
+export async function checkFrappeUserExists(
+    email: string
+): Promise<FrappeUserCheckResponse> {
+    try {
+        ProductionLogger.info('Checking Frappe LMS user existence', {
+            email: email.toLowerCase()
+        });
+
+        // Validate email format
+        const emailValidation = validateEmail(email);
+        if (!emailValidation.valid) {
+            return {
+                success: false,
+                exists: false,
+                error: emailValidation.error
+            };
+        }
+
+        // Validate base URL
+        if (!FRAPPE_CONFIG.baseUrl) {
+            throw new Error('FRAPPE_LMS_BASE_URL is not configured');
+        }
+
+        const checkUrl = `${FRAPPE_CONFIG.baseUrl}/api/method/lms.lms.doctype.lms_enrollment.lms_enrollment.check_user_exists`;
+
+        ProductionLogger.info('Making Frappe LMS user check API call', {
+            url: checkUrl,
+            email: email.toLowerCase()
+        });
+
+        // Make API call (guest access, no auth required)
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), FRAPPE_CONFIG.timeout);
+
+        const response = await fetch(checkUrl, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+            },
+            body: JSON.stringify({
+                user_email: email.toLowerCase()
+            }),
+            signal: controller.signal
+        });
+
+        clearTimeout(timeoutId);
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            ProductionLogger.error('Frappe user check API error', {
+                status: response.status,
+                statusText: response.statusText,
+                body: errorText
+            });
+            throw new Error(`Frappe API returned ${response.status}: ${errorText}`);
+        }
+
+        const result = await response.json();
+
+        ProductionLogger.info('Frappe user check response', {
+            exists: result.message?.exists,
+            hasUserData: !!result.message?.user,
+            rawResponse: result
+        });
+
+        if (result.message?.exists) {
+            return {
+                success: true,
+                exists: true,
+                user: result.message.user
+            };
+        } else {
+            return {
+                success: true,
+                exists: false,
+                registration_url: result.message?.registration_url ||
+                    `${FRAPPE_CONFIG.baseUrl}/register`
+            };
+        }
+
+    } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+
+        ProductionLogger.error('Frappe user check failed', {
+            error: errorMessage,
+            email
+        });
+
+        // Provide user-friendly error messages
+        let userError = errorMessage;
+        if (errorMessage.includes('aborted')) {
+            userError = 'Request timeout. Please check your connection and try again.';
+        } else if (errorMessage.includes('network')) {
+            userError = 'Network error. Please check your internet connection.';
+        } else if (errorMessage.includes('not configured')) {
+            userError = 'Service configuration error. Please contact support.';
+        }
+
+        return {
+            success: false,
+            exists: false,
+            error: userError
+        };
+    }
+}
+
+/**
+ * Test FrappeLMS API connection
  * 
  * @returns Promise<boolean> - true if connection successful
  */

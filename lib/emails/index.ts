@@ -34,7 +34,8 @@ class SimpleEmailService {
         } catch (error) {
             console.error('❌ SMTP CONNECTION FAILED:', error);
             console.error('⚠️ Please check your SMTP credentials in .env.local');
-            throw new Error('Email service initialization failed');
+            console.error('⚠️ Emails will fail but application will continue');
+            // Don't throw - let app continue even if email fails
         }
     }
 
