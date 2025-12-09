@@ -57,7 +57,6 @@ import { CheckoutRequest, CheckoutResponse } from '@/lib/types';
 import { SiteHeader } from '@/components/site-header';
 import { SiteFooter } from '@/components/site-footer';
 import { parseApiError, parseResponseError, logError } from '@/lib/utils/error-parsing';
-import EnhancedCheckoutFlow from '@/components/enhanced-checkout-flow';
 import Image from 'next/image';
 import {
     Clock,
@@ -73,7 +72,8 @@ import {
     Globe,
     Calendar,
     Target,
-    AlertCircle
+    AlertCircle,
+    ExternalLink
 } from 'lucide-react';
 
 interface Course {
@@ -123,6 +123,19 @@ export default function CourseDetailPage() {
         const newUrlEmail = searchParams.get('usermail') || searchParams.get('useremail') || searchParams.get('email') || lmsRedirectData.frappe_email || '';
         if (newUrlEmail && newUrlEmail !== email) {
             setEmail(newUrlEmail);
+
+            // Auto-verify emails from LMS redirect (they're already verified by Frappe LMS)
+            if (lmsRedirectData.frappe_email && lmsRedirectData.frappe_username) {
+                setEmailVerificationStatus({
+                    isVerifying: false,
+                    isVerified: true,
+                    frappeUser: {
+                        username: lmsRedirectData.frappe_username,
+                        email: lmsRedirectData.frappe_email
+                    },
+                    error: null
+                });
+            }
         }
 
         const newUsername = lmsRedirectData.frappe_username || '';
@@ -435,42 +448,7 @@ export default function CourseDetailPage() {
         }
     };
 
-    // Handlers for EnhancedCheckoutFlow
-    const handleCheckoutSuccess = (result: any) => {
-
-        const primaryEmail = email.trim() || lmsEmail.trim() || '';
-
-        if (result.directEnrollment) {
-            toast({
-                title: "🎉 Enrollment Successful!",
-                description: "You've been enrolled! Redirecting to confirmation...",
-                variant: "default"
-            });
-
-            setIsDialogOpen(false);
-            setUseEnhancedFlow(false);
-
-            setTimeout(() => {
-                const successParams = new URLSearchParams({
-                    type: 'free_enrollment',
-                    courseId: course!.courseId,
-                    courseTitle: course!.title,
-                    email: primaryEmail,
-                    enrollmentId: result.enrollmentId || 'free_enrollment'
-                });
-                router.push(`/success?${successParams.toString()}`);
-            }, 1500);
-        }
-    };
-
-    const handleCheckoutError = (error: string) => {
-        console.error('❌ Enrollment error:', error);
-        toast({
-            title: "Enrollment Failed",
-            description: error,
-            variant: "destructive"
-        });
-    };
+    // handleCheckoutSuccess and handleCheckoutError removed - using direct API calls
 
     const handleStartEnrollment = async () => {
         // MUST be verified first
@@ -1135,18 +1113,12 @@ export default function CourseDetailPage() {
             <SiteFooter />
 
             {/* Purchase Dialog */}
-            <Dialog open={isDialogOpen} onOpenChange={(open) => {
-                setIsDialogOpen(open);
-                if (!open) {
-                    // Reset enhanced flow when dialog closes
-                    setUseEnhancedFlow(false);
-                }
-            }}>
+            <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
                 <DialogContent className="sm:max-w-md">
                     <DialogHeader>
                         <DialogTitle className="flex items-center gap-2">
                             <Mail className="w-5 h-5 text-orange-600" />
-                            {useEnhancedFlow ? 'Processing Enrollment' : 'Complete Your Purchase'}
+                            Complete Your Purchase
                             {lmsRedirectData.frappe_username && (
                                 <Badge variant="outline" className="ml-2 text-xs">
                                     MaalEdu LMS Redirect
@@ -1155,388 +1127,383 @@ export default function CourseDetailPage() {
                         </DialogTitle>
                     </DialogHeader>
 
-                    {/* Show EnhancedCheckoutFlow when enrollment starts */}
-                    {useEnhancedFlow ? (
-                        <EnhancedCheckoutFlow
-                            courseId={course!.courseId}
-                            email={email.trim() || lmsEmail.trim() || ''}
-                            couponCode={couponCode.trim() || undefined}
-                            affiliateEmail={affiliateId.trim() || undefined}
-                            onSuccess={handleCheckoutSuccess}
-                            onError={handleCheckoutError}
-                        />
-                    ) : (
-                        <div className="space-y-6">
-                            {/* LMS Redirect Notice */}
-                            {lmsRedirectData.frappe_username && (
-                                <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-lg border border-blue-200 dark:border-blue-800">
-                                    <div className="flex items-center gap-2 mb-2">
-                                        <Globe className="w-4 h-4 text-blue-600" />
-                                        <span className="font-semibold text-blue-800 dark:text-blue-300">
-                                            Redirected from MaalEdu LMS
-                                        </span>
-                                    </div>
-                                    <div className="text-sm text-blue-700 dark:text-blue-300 space-y-1">
-                                        <p>• Username: <span className="font-mono">{lmsRedirectData.frappe_username}</span></p>
-                                        {lmsRedirectData.affiliate_email && (
-                                            <p>• Affiliate: <span className="font-mono">{lmsRedirectData.affiliate_email}</span></p>
-                                        )}
-                                        <p>• Course enrollment will be synced back to your LMS account</p>
-                                    </div>
+                    <div className="space-y-6">
+                        {/* LMS Redirect Notice */}
+                        {lmsRedirectData.frappe_username && (
+                            <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-lg border border-blue-200 dark:border-blue-800">
+                                <div className="flex items-center gap-2 mb-2">
+                                    <Globe className="w-4 h-4 text-blue-600" />
+                                    <span className="font-semibold text-blue-800 dark:text-blue-300">
+                                        Redirected from MaalEdu LMS
+                                    </span>
                                 </div>
-                            )}
-                            <div className="bg-orange-50 dark:bg-orange-900/20 p-4 rounded-lg">
-                                <h4 className="font-semibold text-gray-900 dark:text-white mb-1">
-                                    {course.title}
-                                </h4>
-                                <div className="flex items-center justify-between">
-                                    <div>
-                                        {couponStatus.isValid && couponStatus.appliedDiscount ? (
-                                            <>
-                                                <p className="text-lg text-gray-500 line-through">
-                                                    {formatPrice(couponStatus.originalPrice || course.price)}
-                                                </p>
-                                                {couponStatus.appliedDiscount === 100 ? (
-                                                    <>
-                                                        <p className="text-2xl font-bold text-green-600">
-                                                            FREE
-                                                        </p>
-                                                        <p className="text-sm text-green-600">
-                                                            100% discount applied!
-                                                        </p>
-                                                    </>
-                                                ) : (
-                                                    <>
-                                                        <p className="text-2xl font-bold text-orange-600 dark:text-orange-400">
-                                                            {formatPrice(couponStatus.finalPrice || 0)}
-                                                        </p>
-                                                        <p className="text-sm text-green-600">
-                                                            {couponStatus.appliedDiscount}% discount applied!
-                                                            Save {formatPrice((couponStatus.originalPrice || course.price) - (couponStatus.finalPrice || 0))}
-                                                        </p>
-                                                    </>
-                                                )}
-                                            </>
-                                        ) : (
-                                            <p className="text-2xl font-bold text-orange-600 dark:text-orange-400">
-                                                {formatPrice(course.price)}
-                                            </p>
-                                        )}
-                                    </div>
+                                <div className="text-sm text-blue-700 dark:text-blue-300 space-y-1">
+                                    <p>• Username: <span className="font-mono">{lmsRedirectData.frappe_username}</span></p>
+                                    {lmsRedirectData.affiliate_email && (
+                                        <p>• Affiliate: <span className="font-mono">{lmsRedirectData.affiliate_email}</span></p>
+                                    )}
+                                    <p>• Course enrollment will be synced back to your LMS account</p>
                                 </div>
                             </div>
-
-                            <div className="space-y-4">
+                        )}
+                        <div className="bg-orange-50 dark:bg-orange-900/20 p-4 rounded-lg">
+                            <h4 className="font-semibold text-gray-900 dark:text-white mb-1">
+                                {course.title}
+                            </h4>
+                            <div className="flex items-center justify-between">
                                 <div>
-                                    <Label htmlFor="email" className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                                        Email Address
-                                        {lmsRedirectData.frappe_email && (
-                                            <Badge variant="secondary" className="ml-2 text-xs">
-                                                Pre-filled from LMS
-                                            </Badge>
-                                        )}
-                                    </Label>
-                                    <div className="flex gap-2 mt-2">
-                                        <Input
-                                            id="email"
-                                            type="email"
-                                            placeholder="your.email@example.com"
-                                            value={email}
-                                            onChange={(e) => {
-                                                setEmail(e.target.value)
-                                                // Reset verification when email changes
-                                                if (emailVerificationStatus.isVerified || emailVerificationStatus.error) {
-                                                    setEmailVerificationStatus({
-                                                        isVerifying: false,
-                                                        isVerified: false,
-                                                        frappeUser: null,
-                                                        error: null
-                                                    });
-                                                }
-                                                // Auto-sync with Frappe LMS email if not pre-filled
-                                                if (!lmsRedirectData.frappe_email) {
-                                                    setLmsEmail(e.target.value)
-                                                }
-                                            }}
-                                            className="flex-1"
-                                            required
-                                            readOnly={!!lmsRedirectData.frappe_email}
-                                            disabled={!!lmsRedirectData.frappe_email || emailVerificationStatus.isVerifying}
-                                        />
-                                        <Button
-                                            type="button"
-                                            onClick={handleVerifyEmail}
-                                            disabled={!email.trim() || emailVerificationStatus.isVerifying || emailVerificationStatus.isVerified}
-                                            variant={emailVerificationStatus.isVerified ? "default" : "outline"}
-                                            className={emailVerificationStatus.isVerified ? "bg-green-600 hover:bg-green-700" : ""}
-                                        >
-                                            {emailVerificationStatus.isVerifying ? (
+                                    {couponStatus.isValid && couponStatus.appliedDiscount ? (
+                                        <>
+                                            <p className="text-lg text-gray-500 line-through">
+                                                {formatPrice(couponStatus.originalPrice || course.price)}
+                                            </p>
+                                            {couponStatus.appliedDiscount === 100 ? (
                                                 <>
-                                                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                                                    Verifying...
-                                                </>
-                                            ) : emailVerificationStatus.isVerified ? (
-                                                <>
-                                                    <CheckCircle className="w-4 h-4 mr-2" />
-                                                    Verified
+                                                    <p className="text-2xl font-bold text-green-600">
+                                                        FREE
+                                                    </p>
+                                                    <p className="text-sm text-green-600">
+                                                        100% discount applied!
+                                                    </p>
                                                 </>
                                             ) : (
-                                                "Validate Email"
+                                                <>
+                                                    <p className="text-2xl font-bold text-orange-600 dark:text-orange-400">
+                                                        {formatPrice(couponStatus.finalPrice || 0)}
+                                                    </p>
+                                                    <p className="text-sm text-green-600">
+                                                        {couponStatus.appliedDiscount}% discount applied!
+                                                        Save {formatPrice((couponStatus.originalPrice || course.price) - (couponStatus.finalPrice || 0))}
+                                                    </p>
+                                                </>
                                             )}
-                                        </Button>
-                                    </div>
-
-                                    {/* Verification Status Messages */}
-                                    {emailVerificationStatus.isVerified && emailVerificationStatus.frappeUser && (
-                                        <div className="mt-2 p-2 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-md">
-                                            <div className="flex items-center text-green-800 dark:text-green-300 text-sm">
-                                                <CheckCircle className="w-4 h-4 mr-2" />
-                                                <span>✅ Verified: {emailVerificationStatus.frappeUser.fullName || emailVerificationStatus.frappeUser.username || email}</span>
-                                            </div>
-                                        </div>
-                                    )}
-
-                                    {emailVerificationStatus.error && (
-                                        <div className="mt-2 p-3 bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 rounded-md">
-                                            <div className="flex items-start gap-2">
-                                                <AlertCircle className="w-4 h-4 text-orange-600 mt-0.5 flex-shrink-0" />
-                                                <div className="flex-1">
-                                                    <p className="text-sm font-medium text-orange-900 dark:text-orange-300">Frappe LMS Account Required</p>
-                                                    <p className="text-xs text-orange-800 dark:text-orange-400 mt-1">You need to register on Frappe LMS first to access courses.</p>
-                                                    <Button
-                                                        type="button"
-                                                        onClick={() => window.open('https://lms.maaledu.com/signup', '_blank')}
-                                                        variant="outline"
-                                                        size="sm"
-                                                        className="mt-2 text-orange-700 border-orange-300 hover:bg-orange-100"
-                                                    >
-                                                        Register on Frappe LMS
-                                                        <ExternalLink className="w-3 h-3 ml-1" />
-                                                    </Button>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    )}
-
-                                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                                        {lmsRedirectData.frappe_email
-                                            ? "Email pre-filled from your LMS account. Course access will be synced automatically."
-                                            : "Click 'Validate Email' to verify your Frappe LMS account before proceeding."
-                                        }
-                                    </p>
-                                </div>
-
-                                {/* MaalEdu LMS Username field removed - Email is sufficient for enrollment */}
-
-
-
-                                {/* Affiliate ID - Optional */}
-                                <div>
-                                    <Label htmlFor="affiliate-id" className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                                        Affiliate ID (Optional)
-                                        {lmsRedirectData.affiliate_email && (
-                                            <Badge variant="secondary" className="ml-2 text-xs">
-                                                Detected from URL
-                                            </Badge>
-                                        )}
-                                    </Label>
-                                    <Input
-                                        id="affiliate-id"
-                                        type="text"
-                                        placeholder="affiliate@example.com or affiliate_code"
-                                        value={affiliateId}
-                                        onChange={(e) => {
-                                            const value = e.target.value;
-                                            setAffiliateId(value);
-
-                                            // Show warning if user tries to enter their own email
-                                            if (value.toLowerCase() === email.toLowerCase() && value.includes('@') && email.includes('@')) {
-                                                toast({
-                                                    title: "Self-referral Notice",
-                                                    description: "You cannot use your own email as an affiliate referral. Leave this field empty if you're enrolling yourself.",
-                                                    variant: "destructive"
-                                                });
-                                            }
-                                        }}
-                                        className="mt-2"
-                                        readOnly={!!lmsRedirectData.affiliate_email}
-                                        disabled={!!lmsRedirectData.affiliate_email}
-                                    />
-                                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                                        {lmsRedirectData.affiliate_email
-                                            ? "Affiliate detected from referral link."
-                                            : "Enter affiliate email or code if you were referred by someone."
-                                        }
-                                    </p>
-                                </div>
-
-                                {/* Coupon Code Input */}
-                                <div>
-                                    <Label htmlFor="coupon-code" className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                                        Coupon Code (Optional)
-                                    </Label>
-                                    <div className="relative mt-2">
-                                        <Input
-                                            id="coupon-code"
-                                            type="text"
-                                            placeholder="Enter coupon code"
-                                            value={couponCode}
-                                            onChange={(e) => handleCouponChange(e.target.value.toUpperCase())}
-                                            onBlur={handleCouponBlur}
-                                            className={`pr-10 ${couponStatus.isValid === true
-                                                ? 'border-green-500 focus:border-green-500'
-                                                : couponStatus.isValid === false
-                                                    ? 'border-red-500 focus:border-red-500'
-                                                    : ''
-                                                }`}
-                                        />
-                                        {couponStatus.isChecking && (
-                                            <Loader2 className="absolute right-3 top-1/2 transform -translate-y-1/2 w-4 h-4 animate-spin text-gray-400" />
-                                        )}
-                                        {couponStatus.isValid === true && (
-                                            <CheckCircle className="absolute right-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-green-500" />
-                                        )}
-                                    </div>
-                                    {couponStatus.message && (
-                                        <p className={`text-sm font-medium mt-1 ${couponStatus.isValid
-                                            ? 'text-green-600 dark:text-green-400'
-                                            : 'text-red-600 dark:text-red-400'
-                                            }`}>
-                                            {couponStatus.isValid ? '✅ ' : '❌ '}{couponStatus.message}
+                                        </>
+                                    ) : (
+                                        <p className="text-2xl font-bold text-orange-600 dark:text-orange-400">
+                                            {formatPrice(course.price)}
                                         </p>
                                     )}
-                                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                                        Have a grant coupon? Enter it here to claim your discount.
-                                    </p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="space-y-4">
+                            <div>
+                                <Label htmlFor="email" className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                                    Email Address
+                                    {lmsRedirectData.frappe_email && (
+                                        <Badge variant="secondary" className="ml-2 text-xs">
+                                            Pre-filled from LMS
+                                        </Badge>
+                                    )}
+                                </Label>
+                                <div className="flex gap-2 mt-2">
+                                    <Input
+                                        id="email"
+                                        type="email"
+                                        placeholder="your.email@example.com"
+                                        value={email}
+                                        onChange={(e) => {
+                                            setEmail(e.target.value)
+                                            // Reset verification when email changes
+                                            if (emailVerificationStatus.isVerified || emailVerificationStatus.error) {
+                                                setEmailVerificationStatus({
+                                                    isVerifying: false,
+                                                    isVerified: false,
+                                                    frappeUser: null,
+                                                    error: null
+                                                });
+                                            }
+                                            // Auto-sync with Frappe LMS email if not pre-filled
+                                            if (!lmsRedirectData.frappe_email) {
+                                                setLmsEmail(e.target.value)
+                                            }
+                                        }}
+                                        className="flex-1"
+                                        required
+                                        readOnly={!!lmsRedirectData.frappe_email}
+                                        disabled={!!lmsRedirectData.frappe_email || emailVerificationStatus.isVerifying}
+                                    />
+                                    <Button
+                                        type="button"
+                                        onClick={handleVerifyEmail}
+                                        disabled={!email.trim() || emailVerificationStatus.isVerifying || emailVerificationStatus.isVerified || !!lmsRedirectData.frappe_email}
+                                        variant={emailVerificationStatus.isVerified ? "default" : "outline"}
+                                        className={emailVerificationStatus.isVerified ? "bg-green-600 hover:bg-green-700 cursor-not-allowed" : ""}
+                                    >
+                                        {emailVerificationStatus.isVerifying ? (
+                                            <>
+                                                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                                                Verifying...
+                                            </>
+                                        ) : emailVerificationStatus.isVerified ? (
+                                            <>
+                                                <CheckCircle className="w-4 h-4 mr-2" />
+                                                Verified
+                                            </>
+                                        ) : (
+                                            "Validate Email"
+                                        )}
+                                    </Button>
                                 </div>
 
-                                <div className="flex gap-3">
-                                    <Button
-                                        onClick={handleStartEnrollment}
-                                        disabled={!emailVerificationStatus.isVerified || (!email.trim() && !lmsEmail.trim()) || validationState.hasSelfReferral || isLoading}
-                                        className="flex-1 bg-orange-600 hover:bg-orange-700 text-white disabled:opacity-50"
-                                    >
-                                        {couponStatus.isValid === true ? (
-                                            couponStatus.appliedDiscount === 100 ? (
-                                                <>
-                                                    <CheckCircle className="w-4 h-4 mr-2" />
-                                                    Start Free Enrollment
-                                                </>
-                                            ) : (
-                                                <>
-                                                    <ShoppingCart className="w-4 h-4 mr-2" />
-                                                    Start Checkout ({couponStatus.appliedDiscount}% off)
-                                                </>
-                                            )
+                                {/* Verification Status Messages */}
+                                {emailVerificationStatus.isVerified && emailVerificationStatus.frappeUser && (
+                                    <div className="mt-2 p-2 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-md">
+                                        <div className="flex items-center text-green-800 dark:text-green-300 text-sm">
+                                            <CheckCircle className="w-4 h-4 mr-2" />
+                                            <span>✅ Verified: {emailVerificationStatus.frappeUser.fullName || emailVerificationStatus.frappeUser.username || email}</span>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {emailVerificationStatus.error && (
+                                    <div className="mt-2 p-3 bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 rounded-md">
+                                        <div className="flex items-start gap-2">
+                                            <AlertCircle className="w-4 h-4 text-orange-600 mt-0.5 flex-shrink-0" />
+                                            <div className="flex-1">
+                                                <p className="text-sm font-medium text-orange-900 dark:text-orange-300">Frappe LMS Account Required</p>
+                                                <p className="text-xs text-orange-800 dark:text-orange-400 mt-1">You need to register on Frappe LMS first to access courses.</p>
+                                                <Button
+                                                    type="button"
+                                                    onClick={() => window.open('https://lms.maaledu.com/signup', '_blank')}
+                                                    variant="outline"
+                                                    size="sm"
+                                                    className="mt-2 text-orange-700 border-orange-300 hover:bg-orange-100"
+                                                >
+                                                    Register on Frappe LMS
+                                                    <ExternalLink className="w-3 h-3 ml-1" />
+                                                </Button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+
+                                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                                    {lmsRedirectData.frappe_email
+                                        ? "✅ Email pre-verified from your LMS account. Course access will be synced automatically."
+                                        : emailVerificationStatus.isVerified
+                                            ? "✅ Email verified! You can now proceed with enrollment."
+                                            : "Click 'Validate Email' to verify your Frappe LMS account before proceeding."
+                                    }
+                                </p>
+                            </div>
+
+                            {/* MaalEdu LMS Username field removed - Email is sufficient for enrollment */}
+
+
+
+                            {/* Affiliate ID - Optional */}
+                            <div>
+                                <Label htmlFor="affiliate-id" className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                                    Affiliate ID (Optional)
+                                    {lmsRedirectData.affiliate_email && (
+                                        <Badge variant="secondary" className="ml-2 text-xs">
+                                            Detected from URL
+                                        </Badge>
+                                    )}
+                                </Label>
+                                <Input
+                                    id="affiliate-id"
+                                    type="text"
+                                    placeholder="affiliate@example.com or affiliate_code"
+                                    value={affiliateId}
+                                    onChange={(e) => {
+                                        const value = e.target.value;
+                                        setAffiliateId(value);
+
+                                        // Show warning if user tries to enter their own email
+                                        if (value.toLowerCase() === email.toLowerCase() && value.includes('@') && email.includes('@')) {
+                                            toast({
+                                                title: "Self-referral Notice",
+                                                description: "You cannot use your own email as an affiliate referral. Leave this field empty if you're enrolling yourself.",
+                                                variant: "destructive"
+                                            });
+                                        }
+                                    }}
+                                    className="mt-2"
+                                    readOnly={!!lmsRedirectData.affiliate_email}
+                                    disabled={!!lmsRedirectData.affiliate_email}
+                                />
+                                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                                    {lmsRedirectData.affiliate_email
+                                        ? "Affiliate detected from referral link."
+                                        : "Enter affiliate email or code if you were referred by someone."
+                                    }
+                                </p>
+                            </div>
+
+                            {/* Coupon Code Input */}
+                            <div>
+                                <Label htmlFor="coupon-code" className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                                    Coupon Code (Optional)
+                                </Label>
+                                <div className="relative mt-2">
+                                    <Input
+                                        id="coupon-code"
+                                        type="text"
+                                        placeholder="Enter coupon code"
+                                        value={couponCode}
+                                        onChange={(e) => handleCouponChange(e.target.value.toUpperCase())}
+                                        onBlur={handleCouponBlur}
+                                        className={`pr-10 ${couponStatus.isValid === true
+                                            ? 'border-green-500 focus:border-green-500'
+                                            : couponStatus.isValid === false
+                                                ? 'border-red-500 focus:border-red-500'
+                                                : ''
+                                            }`}
+                                    />
+                                    {couponStatus.isChecking && (
+                                        <Loader2 className="absolute right-3 top-1/2 transform -translate-y-1/2 w-4 h-4 animate-spin text-gray-400" />
+                                    )}
+                                    {couponStatus.isValid === true && (
+                                        <CheckCircle className="absolute right-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-green-500" />
+                                    )}
+                                </div>
+                                {couponStatus.message && (
+                                    <p className={`text-sm font-medium mt-1 ${couponStatus.isValid
+                                        ? 'text-green-600 dark:text-green-400'
+                                        : 'text-red-600 dark:text-red-400'
+                                        }`}>
+                                        {couponStatus.isValid ? '✅ ' : '❌ '}{couponStatus.message}
+                                    </p>
+                                )}
+                                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                                    Have a grant coupon? Enter it here to claim your discount.
+                                </p>
+                            </div>
+
+                            <div className="flex gap-3">
+                                <Button
+                                    onClick={handleStartEnrollment}
+                                    disabled={!emailVerificationStatus.isVerified || (!email.trim() && !lmsEmail.trim()) || validationState.hasSelfReferral || isLoading}
+                                    className="flex-1 bg-orange-600 hover:bg-orange-700 text-white disabled:opacity-50"
+                                >
+                                    {isLoading ? (
+                                        <>
+                                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                                            Processing...
+                                        </>
+                                    ) : couponStatus.isValid === true ? (
+                                        couponStatus.appliedDiscount === 100 ? (
+                                            <>
+                                                <CheckCircle className="w-4 h-4 mr-2" />
+                                                Start Free Enrollment
+                                            </>
                                         ) : (
                                             <>
                                                 <ShoppingCart className="w-4 h-4 mr-2" />
-                                                Start Enrollment
+                                                Start Checkout ({couponStatus.appliedDiscount}% off)
                                             </>
-                                        )}
-                                    </Button>
+                                        )
+                                    ) : (
+                                        <>
+                                            <ShoppingCart className="w-4 h-4 mr-2" />
+                                            Start Enrollment
+                                        </>
+                                    )}
+                                </Button>
 
-                                    <Button
-                                        onClick={() => setIsDialogOpen(false)}
-                                        variant="outline"
-                                        disabled={isLoading}
-                                    >
-                                        Cancel
-                                    </Button>
+                                <Button
+                                    onClick={() => setIsDialogOpen(false)}
+                                    variant="outline"
+                                    disabled={isLoading}
+                                >
+                                    Cancel
+                                </Button>
+                            </div>
+
+                            {/* Validation Message */}
+                            {validationState.hasSelfReferral && (
+                                <div className="mt-3 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md">
+                                    <div className="flex items-center text-red-800 dark:text-red-300 text-sm">
+                                        <AlertCircle className="w-4 h-4 mr-2" />
+                                        {validationState.validationMessage}
+                                    </div>
+                                    <p className="text-red-700 dark:text-red-400 text-xs mt-1">
+                                        Leave the affiliate field empty if you're enrolling yourself.
+                                    </p>
                                 </div>
+                            )}
 
-                                {/* Validation Message */}
-                                {validationState.hasSelfReferral && (
-                                    <div className="mt-3 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md">
-                                        <div className="flex items-center text-red-800 dark:text-red-300 text-sm">
-                                            <AlertCircle className="w-4 h-4 mr-2" />
-                                            {validationState.validationMessage}
-                                        </div>
-                                        <p className="text-red-700 dark:text-red-400 text-xs mt-1">
-                                            Leave the affiliate field empty if you're enrolling yourself.
-                                        </p>
-                                    </div>
-                                )}
-
-                                {/* Enhanced Error Display & Retry Section */}
-                                {retryState.lastError && retryState.count > 0 && (
-                                    <div className="mt-4 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
-                                        <div className="flex items-start space-x-3">
-                                            <div className="flex-shrink-0">
-                                                <div className="flex items-center justify-center w-6 h-6 bg-red-100 dark:bg-red-900/50 rounded-full">
-                                                    <span className="text-red-600 dark:text-red-400 text-sm font-semibold">!</span>
-                                                </div>
+                            {/* Enhanced Error Display & Retry Section */}
+                            {retryState.lastError && retryState.count > 0 && (
+                                <div className="mt-4 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
+                                    <div className="flex items-start space-x-3">
+                                        <div className="flex-shrink-0">
+                                            <div className="flex items-center justify-center w-6 h-6 bg-red-100 dark:bg-red-900/50 rounded-full">
+                                                <span className="text-red-600 dark:text-red-400 text-sm font-semibold">!</span>
                                             </div>
-                                            <div className="flex-1 min-w-0">
-                                                <h4 className="text-sm font-medium text-red-800 dark:text-red-200">
-                                                    Enrollment Failed
-                                                </h4>
-                                                <div className="mt-1 text-sm text-red-700 dark:text-red-300">
-                                                    {retryState.errorCode && (
-                                                        <p className="mb-1">
-                                                            <span className="font-mono text-xs bg-red-100 dark:bg-red-900/50 px-1 py-0.5 rounded">
-                                                                {retryState.errorCode}
-                                                            </span>
-                                                        </p>
-                                                    )}
-                                                    {retryState.suggestions && retryState.suggestions.length > 0 && (
-                                                        <ul className="list-disc list-inside space-y-1">
-                                                            {retryState.suggestions.map((suggestion, idx) => (
-                                                                <li key={idx}>{suggestion}</li>
-                                                            ))}
-                                                        </ul>
-                                                    )}
-                                                </div>
-
-                                                {retryState.canRetry && (
-                                                    <div className="mt-3 flex items-center space-x-3">
-                                                        <Button
-                                                            onClick={() => {
-                                                                setRetryState(prev => ({ ...prev, count: 0, lastError: null, canRetry: true }));
-                                                                handleBuyNow();
-                                                            }}
-                                                            size="sm"
-                                                            variant="outline"
-                                                            className="border-red-300 text-red-700 hover:bg-red-50 dark:border-red-700 dark:text-red-300 dark:hover:bg-red-900/50"
-                                                            disabled={isLoading}
-                                                        >
-                                                            Try Again ({3 - retryState.count} attempts left)
-                                                        </Button>
-                                                        <span className="text-xs text-red-600 dark:text-red-400">
-                                                            Attempt {retryState.count} of 3
+                                        </div>
+                                        <div className="flex-1 min-w-0">
+                                            <h4 className="text-sm font-medium text-red-800 dark:text-red-200">
+                                                Enrollment Failed
+                                            </h4>
+                                            <div className="mt-1 text-sm text-red-700 dark:text-red-300">
+                                                {retryState.errorCode && (
+                                                    <p className="mb-1">
+                                                        <span className="font-mono text-xs bg-red-100 dark:bg-red-900/50 px-1 py-0.5 rounded">
+                                                            {retryState.errorCode}
                                                         </span>
-                                                    </div>
+                                                    </p>
                                                 )}
-
-                                                {!retryState.canRetry && (
-                                                    <div className="mt-3">
-                                                        <p className="text-sm text-red-700 dark:text-red-300 mb-2">
-                                                            Maximum retry attempts reached. Please contact support if the issue persists.
-                                                        </p>
-                                                        <Button
-                                                            size="sm"
-                                                            variant="outline"
-                                                            className="border-red-300 text-red-700 hover:bg-red-50 dark:border-red-700 dark:text-red-300 dark:hover:bg-red-900/50"
-                                                            onClick={() => window.open('mailto:support@maaledu.com?subject=Enrollment%20Issue', '_blank')}
-                                                        >
-                                                            <Mail className="w-3 h-3 mr-1" />
-                                                            Contact Support
-                                                        </Button>
-                                                    </div>
+                                                {retryState.suggestions && retryState.suggestions.length > 0 && (
+                                                    <ul className="list-disc list-inside space-y-1">
+                                                        {retryState.suggestions.map((suggestion, idx) => (
+                                                            <li key={idx}>{suggestion}</li>
+                                                        ))}
+                                                    </ul>
                                                 )}
                                             </div>
+
+                                            {retryState.canRetry && (
+                                                <div className="mt-3 flex items-center space-x-3">
+                                                    <Button
+                                                        onClick={() => {
+                                                            setRetryState(prev => ({ ...prev, count: 0, lastError: null, canRetry: true }));
+                                                            handleBuyNow();
+                                                        }}
+                                                        size="sm"
+                                                        variant="outline"
+                                                        className="border-red-300 text-red-700 hover:bg-red-50 dark:border-red-700 dark:text-red-300 dark:hover:bg-red-900/50"
+                                                        disabled={isLoading}
+                                                    >
+                                                        Try Again ({3 - retryState.count} attempts left)
+                                                    </Button>
+                                                    <span className="text-xs text-red-600 dark:text-red-400">
+                                                        Attempt {retryState.count} of 3
+                                                    </span>
+                                                </div>
+                                            )}
+
+                                            {!retryState.canRetry && (
+                                                <div className="mt-3">
+                                                    <p className="text-sm text-red-700 dark:text-red-300 mb-2">
+                                                        Maximum retry attempts reached. Please contact support if the issue persists.
+                                                    </p>
+                                                    <Button
+                                                        size="sm"
+                                                        variant="outline"
+                                                        className="border-red-300 text-red-700 hover:bg-red-50 dark:border-red-700 dark:text-red-300 dark:hover:bg-red-900/50"
+                                                        onClick={() => window.open('mailto:support@maaledu.com?subject=Enrollment%20Issue', '_blank')}
+                                                    >
+                                                        <Mail className="w-3 h-3 mr-1" />
+                                                        Contact Support
+                                                    </Button>
+                                                </div>
+                                            )}
                                         </div>
                                     </div>
-                                )}
-                            </div>
-
-                            <div className="text-xs text-gray-500 dark:text-gray-400 space-y-1">
-                                <p>• You'll be redirected to Stripe for secure payment processing</p>
-                                <p>• Course access will be granted immediately after payment</p>
-                                <p>• You'll receive email confirmation with login details</p>
-                            </div>
+                                </div>
+                            )}
                         </div>
-                    )}
+
+                        <div className="text-xs text-gray-500 dark:text-gray-400 space-y-1">
+                            <p>• You'll be redirected to Stripe for secure payment processing</p>
+                            <p>• Course access will be granted immediately after payment</p>
+                            <p>• You'll receive email confirmation with login details</p>
+                        </div>
+                    </div>
                 </DialogContent>
             </Dialog>
         </div>
