@@ -163,6 +163,20 @@ export default function CourseDetailPage() {
     const [isLoading, setIsLoading] = useState(false);
     const [isDialogOpen, setIsDialogOpen] = useState(false);
     const [useEnhancedFlow, setUseEnhancedFlow] = useState(false); // Track if using enhanced checkout flow
+
+    // Email verification states
+    const [emailVerificationStatus, setEmailVerificationStatus] = useState<{
+        isVerifying: boolean;
+        isVerified: boolean;
+        frappeUser: any | null;
+        error: string | null;
+    }>({
+        isVerifying: false,
+        isVerified: false,
+        frappeUser: null,
+        error: null
+    });
+
     const { toast } = useToast();
 
     // Enhanced state management for enrollment
@@ -340,6 +354,87 @@ export default function CourseDetailPage() {
         validateEnrollmentInputs();
     }, [email, lmsEmail, affiliateId]);
 
+    // Email verification handler - MUST verify before payment
+    const handleVerifyEmail = async () => {
+        const emailToVerify = (email.trim() || lmsEmail.trim()).toLowerCase();
+
+        if (!emailToVerify) {
+            toast({
+                title: "Email Required",
+                description: "Please enter your email address to verify.",
+                variant: "destructive"
+            });
+            return;
+        }
+
+        setEmailVerificationStatus({
+            isVerifying: true,
+            isVerified: false,
+            frappeUser: null,
+            error: null
+        });
+
+        try {
+            const response = await fetch('/api/verify-frappe-user', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ email: emailToVerify })
+            });
+
+            const result = await response.json();
+
+            if (!response.ok) {
+                throw new Error(result.error || 'Verification failed');
+            }
+
+            if (result.exists) {
+                // User exists - verification successful
+                setEmailVerificationStatus({
+                    isVerifying: false,
+                    isVerified: true,
+                    frappeUser: result.user,
+                    error: null
+                });
+
+                toast({
+                    title: "✅ Email Verified!",
+                    description: `Welcome back, ${result.user?.fullName || result.user?.username || 'student'}! You can now proceed with enrollment.`,
+                    variant: "default"
+                });
+            } else {
+                // User doesn't exist
+                setEmailVerificationStatus({
+                    isVerifying: false,
+                    isVerified: false,
+                    frappeUser: null,
+                    error: 'Frappe LMS account required'
+                });
+
+                toast({
+                    title: "Account Not Found",
+                    description: "You need to register on Frappe LMS first. Click the button below to register.",
+                    variant: "destructive"
+                });
+            }
+        } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Verification failed';
+            setEmailVerificationStatus({
+                isVerifying: false,
+                isVerified: false,
+                frappeUser: null,
+                error: errorMessage
+            });
+
+            toast({
+                title: "Verification Failed",
+                description: errorMessage,
+                variant: "destructive"
+            });
+        }
+    };
+
     // Handlers for EnhancedCheckoutFlow
     const handleCheckoutSuccess = (result: any) => {
 
@@ -377,8 +472,18 @@ export default function CourseDetailPage() {
         });
     };
 
-    const handleStartEnrollment = () => {
-        // Validate email before starting
+    const handleStartEnrollment = async () => {
+        // MUST be verified first
+        if (!emailVerificationStatus.isVerified) {
+            toast({
+                title: "Email Not Verified",
+                description: "Please verify your email first by clicking the 'Validate Email' button.",
+                variant: "destructive"
+            });
+            return;
+        }
+
+        // Validate email
         if (!email.trim() && !lmsEmail.trim()) {
             toast({
                 title: "Email Required",
@@ -402,8 +507,8 @@ export default function CourseDetailPage() {
             return;
         }
 
-        // Start enhanced checkout flow
-        setUseEnhancedFlow(true);
+        // Proceed with direct checkout API call
+        await handleBuyNow();
     };
 
     // 💳 SINGLE PATH: Consolidated enrollment via checkout API
@@ -1131,27 +1236,92 @@ export default function CourseDetailPage() {
                                             </Badge>
                                         )}
                                     </Label>
-                                    <Input
-                                        id="email"
-                                        type="email"
-                                        placeholder="your.email@example.com"
-                                        value={email}
-                                        onChange={(e) => {
-                                            setEmail(e.target.value)
-                                            // Auto-sync with Frappe LMS email if not pre-filled
-                                            if (!lmsRedirectData.frappe_email) {
-                                                setLmsEmail(e.target.value)
-                                            }
-                                        }}
-                                        className="mt-2"
-                                        required
-                                        readOnly={!!lmsRedirectData.frappe_email}
-                                        disabled={!!lmsRedirectData.frappe_email}
-                                    />
+                                    <div className="flex gap-2 mt-2">
+                                        <Input
+                                            id="email"
+                                            type="email"
+                                            placeholder="your.email@example.com"
+                                            value={email}
+                                            onChange={(e) => {
+                                                setEmail(e.target.value)
+                                                // Reset verification when email changes
+                                                if (emailVerificationStatus.isVerified || emailVerificationStatus.error) {
+                                                    setEmailVerificationStatus({
+                                                        isVerifying: false,
+                                                        isVerified: false,
+                                                        frappeUser: null,
+                                                        error: null
+                                                    });
+                                                }
+                                                // Auto-sync with Frappe LMS email if not pre-filled
+                                                if (!lmsRedirectData.frappe_email) {
+                                                    setLmsEmail(e.target.value)
+                                                }
+                                            }}
+                                            className="flex-1"
+                                            required
+                                            readOnly={!!lmsRedirectData.frappe_email}
+                                            disabled={!!lmsRedirectData.frappe_email || emailVerificationStatus.isVerifying}
+                                        />
+                                        <Button
+                                            type="button"
+                                            onClick={handleVerifyEmail}
+                                            disabled={!email.trim() || emailVerificationStatus.isVerifying || emailVerificationStatus.isVerified}
+                                            variant={emailVerificationStatus.isVerified ? "default" : "outline"}
+                                            className={emailVerificationStatus.isVerified ? "bg-green-600 hover:bg-green-700" : ""}
+                                        >
+                                            {emailVerificationStatus.isVerifying ? (
+                                                <>
+                                                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                                                    Verifying...
+                                                </>
+                                            ) : emailVerificationStatus.isVerified ? (
+                                                <>
+                                                    <CheckCircle className="w-4 h-4 mr-2" />
+                                                    Verified
+                                                </>
+                                            ) : (
+                                                "Validate Email"
+                                            )}
+                                        </Button>
+                                    </div>
+
+                                    {/* Verification Status Messages */}
+                                    {emailVerificationStatus.isVerified && emailVerificationStatus.frappeUser && (
+                                        <div className="mt-2 p-2 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-md">
+                                            <div className="flex items-center text-green-800 dark:text-green-300 text-sm">
+                                                <CheckCircle className="w-4 h-4 mr-2" />
+                                                <span>✅ Verified: {emailVerificationStatus.frappeUser.fullName || emailVerificationStatus.frappeUser.username || email}</span>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {emailVerificationStatus.error && (
+                                        <div className="mt-2 p-3 bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 rounded-md">
+                                            <div className="flex items-start gap-2">
+                                                <AlertCircle className="w-4 h-4 text-orange-600 mt-0.5 flex-shrink-0" />
+                                                <div className="flex-1">
+                                                    <p className="text-sm font-medium text-orange-900 dark:text-orange-300">Frappe LMS Account Required</p>
+                                                    <p className="text-xs text-orange-800 dark:text-orange-400 mt-1">You need to register on Frappe LMS first to access courses.</p>
+                                                    <Button
+                                                        type="button"
+                                                        onClick={() => window.open('https://lms.maaledu.com/signup', '_blank')}
+                                                        variant="outline"
+                                                        size="sm"
+                                                        className="mt-2 text-orange-700 border-orange-300 hover:bg-orange-100"
+                                                    >
+                                                        Register on Frappe LMS
+                                                        <ExternalLink className="w-3 h-3 ml-1" />
+                                                    </Button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+
                                     <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
                                         {lmsRedirectData.frappe_email
                                             ? "Email pre-filled from your LMS account. Course access will be synced automatically."
-                                            : "Email for course access and communications. This will be used for enrollment."
+                                            : "Click 'Validate Email' to verify your Frappe LMS account before proceeding."
                                         }
                                     </p>
                                 </div>
@@ -1243,7 +1413,7 @@ export default function CourseDetailPage() {
                                 <div className="flex gap-3">
                                     <Button
                                         onClick={handleStartEnrollment}
-                                        disabled={(!email.trim() && !lmsEmail.trim()) || validationState.hasSelfReferral}
+                                        disabled={!emailVerificationStatus.isVerified || (!email.trim() && !lmsEmail.trim()) || validationState.hasSelfReferral || isLoading}
                                         className="flex-1 bg-orange-600 hover:bg-orange-700 text-white disabled:opacity-50"
                                     >
                                         {couponStatus.isValid === true ? (
