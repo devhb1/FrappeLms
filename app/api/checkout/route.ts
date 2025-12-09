@@ -516,7 +516,29 @@ async function processCouponEnrollment(data: any) {
         }
     };
 
-    // 6.5. ===== FRAPPE LMS INTEGRATION =====
+    // 6.5. ===== SEND GRANT ENROLLMENT EMAIL (IMMEDIATELY AFTER ENROLLMENT) =====
+    // Send email BEFORE Frappe sync to ensure users always get confirmation
+    try {
+        await sendEmail.grantCourseEnrollment(
+            email.toLowerCase(),
+            email.split('@')[0],
+            course.title,
+            new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }),
+            originalPrice
+        );
+        ProductionLogger.info('Grant enrollment confirmation email sent', {
+            email: email.toLowerCase(),
+            courseId: courseId
+        });
+    } catch (emailError) {
+        ProductionLogger.error('Failed to send grant enrollment email', {
+            error: emailError instanceof Error ? emailError.message : 'Unknown error',
+            email: email.toLowerCase()
+        });
+        // Don't fail enrollment if email fails - enrollment was successful
+    }
+
+    // 6.6. ===== FRAPPE LMS INTEGRATION =====
     // Enroll in FrappeLMS immediately for free enrollments
     try {
         ProductionLogger.info('Enrolling in FrappeLMS (free enrollment)');
@@ -547,26 +569,6 @@ async function processCouponEnrollment(data: any) {
             ProductionLogger.info('FrappeLMS enrollment successful (free)', {
                 enrollmentId: frappeResult.enrollment_id
             });
-
-            // Send grant enrollment confirmation email ONLY after Frappe success
-            try {
-                await sendEmail.grantCourseEnrollment(
-                    email.toLowerCase(),
-                    email.split('@')[0],
-                    course.title,
-                    new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }),
-                    originalPrice
-                );
-                ProductionLogger.info('Grant enrollment confirmation email sent', {
-                    email: email.toLowerCase(),
-                    courseId: courseId
-                });
-            } catch (emailError) {
-                ProductionLogger.error('Failed to send grant enrollment email', {
-                    error: emailError instanceof Error ? emailError.message : 'Unknown error',
-                    email: email.toLowerCase()
-                });
-            }
         } else {
             // Queue for background retry instead of blocking user (improved UX)
             ProductionLogger.warn('First Frappe attempt failed, queuing for immediate background retry...', {
@@ -672,9 +674,6 @@ async function processCouponEnrollment(data: any) {
         enrollmentId: savedEnrollment._id,
         discountApplied: `${discountPercentage}%`
     });
-
-    // NOTE: Email is sent inside Frappe success block (line ~555)
-    // No need to send duplicate email here - email already sent when Frappe enrollment succeeds
 
     return NextResponse.json({
         success: true,

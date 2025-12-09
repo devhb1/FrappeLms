@@ -329,8 +329,53 @@ export async function POST(req: NextRequest) {
                 console.log(`ℹ️ No affiliate associated with this enrollment`);
             }
 
+            // ===== SEND ENROLLMENT CONFIRMATION EMAIL (IMMEDIATELY AFTER PAYMENT) =====
+            // Send email BEFORE Frappe enrollment to ensure users always get confirmation
+            try {
+                const course = await getCourseFromDb(metadata.courseId);
+
+                // Check if this is a partial grant enrollment
+                if (updatedEnrollment.enrollmentType === 'partial_grant' && updatedEnrollment.grantData) {
+                    // Send partial grant email with savings information
+                    await sendEmail.partialGrantEnrollment(
+                        customerEmail,
+                        customerName || 'Student',
+                        course?.title || metadata.courseId,
+                        new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }),
+                        updatedEnrollment.grantData.originalPrice || updatedEnrollment.amount,
+                        updatedEnrollment.amount,
+                        updatedEnrollment.grantData.discountPercentage || 0,
+                        updatedEnrollment.grantData.couponCode || 'N/A'
+                    );
+                    ProductionLogger.info('Partial grant enrollment confirmation email sent', {
+                        email: customerEmail,
+                        courseId: metadata.courseId,
+                        savings: (updatedEnrollment.grantData.originalPrice || 0) - updatedEnrollment.amount
+                    });
+                } else {
+                    // Send regular purchase confirmation
+                    await sendEmail.coursePurchaseConfirmation(
+                        customerEmail,
+                        customerName || 'Student',
+                        course?.title || metadata.courseId,
+                        updatedEnrollment.amount,
+                        new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
+                    );
+                    ProductionLogger.info('Enrollment confirmation email sent', {
+                        email: customerEmail,
+                        courseId: metadata.courseId
+                    });
+                }
+            } catch (emailError) {
+                ProductionLogger.error('Failed to send enrollment email', {
+                    error: emailError instanceof Error ? emailError.message : 'Unknown error',
+                    email: customerEmail
+                });
+                // Don't fail the webhook if email fails - payment was successful
+            }
+
             // ===== FRAPPE LMS INTEGRATION =====
-            // Enroll user in FrappeLMS after successful payment
+            // Enroll user in FrappeLMS after successful payment (and after email sent)
             try {
                 console.log(`🎓 Enrolling user in FrappeLMS...`);
 
@@ -400,49 +445,6 @@ export async function POST(req: NextRequest) {
                             customerEmail
                         });
                         console.log(`✅ FrappeLMS enrollment completed: ${frappeResult.enrollment_id}`);
-
-                        // ===== SEND EMAIL ONLY AFTER SUCCESSFUL FRAPPE ENROLLMENT =====
-                        try {
-                            const course = await getCourseFromDb(metadata.courseId);
-
-                            // Check if this is a partial grant enrollment
-                            if (updatedEnrollment.enrollmentType === 'partial_grant' && updatedEnrollment.grantData) {
-                                // Send partial grant email with savings information
-                                await sendEmail.partialGrantEnrollment(
-                                    customerEmail,
-                                    customerName || 'Student',
-                                    course?.title || metadata.courseId,
-                                    new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }),
-                                    updatedEnrollment.grantData.originalPrice || updatedEnrollment.amount,
-                                    updatedEnrollment.amount,
-                                    updatedEnrollment.grantData.discountPercentage || 0,
-                                    updatedEnrollment.grantData.couponCode || 'N/A'
-                                );
-                                ProductionLogger.info('Partial grant enrollment confirmation email sent', {
-                                    email: customerEmail,
-                                    courseId: metadata.courseId,
-                                    savings: (updatedEnrollment.grantData.originalPrice || 0) - updatedEnrollment.amount
-                                });
-                            } else {
-                                // Send regular purchase confirmation
-                                await sendEmail.coursePurchaseConfirmation(
-                                    customerEmail,
-                                    customerName || 'Student',
-                                    course?.title || metadata.courseId,
-                                    updatedEnrollment.amount,
-                                    new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
-                                );
-                                ProductionLogger.info('Enrollment confirmation email sent', {
-                                    email: customerEmail,
-                                    courseId: metadata.courseId
-                                });
-                            }
-                        } catch (emailError) {
-                            ProductionLogger.error('Failed to send enrollment email', {
-                                error: emailError instanceof Error ? emailError.message : 'Unknown error',
-                                email: customerEmail
-                            });
-                        }
                     } else {
                         // IMMEDIATE RETRY before queuing
                         ProductionLogger.warn('First Frappe attempt failed, retrying immediately...', {
@@ -502,49 +504,6 @@ export async function POST(req: NextRequest) {
                                         retryJobId: updatedEnrollment.frappeSync.retryJobId
                                     });
                                 }
-                            }
-
-                            // ===== SEND EMAIL AFTER SUCCESSFUL RETRY =====
-                            try {
-                                const course = await getCourseFromDb(metadata.courseId);
-
-                                // Check if this is a partial grant enrollment
-                                if (updatedEnrollment.enrollmentType === 'partial_grant' && updatedEnrollment.grantData) {
-                                    // Send partial grant email with savings information
-                                    await sendEmail.partialGrantEnrollment(
-                                        customerEmail,
-                                        customerName || 'Student',
-                                        course?.title || metadata.courseId,
-                                        new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }),
-                                        updatedEnrollment.grantData.originalPrice || updatedEnrollment.amount,
-                                        updatedEnrollment.amount,
-                                        updatedEnrollment.grantData.discountPercentage || 0,
-                                        updatedEnrollment.grantData.couponCode || 'N/A'
-                                    );
-                                    ProductionLogger.info('Partial grant enrollment confirmation email sent (after retry)', {
-                                        email: customerEmail,
-                                        courseId: metadata.courseId,
-                                        savings: (updatedEnrollment.grantData.originalPrice || 0) - updatedEnrollment.amount
-                                    });
-                                } else {
-                                    // Send regular purchase confirmation
-                                    await sendEmail.coursePurchaseConfirmation(
-                                        customerEmail,
-                                        customerName || 'Student',
-                                        course?.title || metadata.courseId,
-                                        updatedEnrollment.amount,
-                                        new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
-                                    );
-                                    ProductionLogger.info('Enrollment confirmation email sent (after retry)', {
-                                        email: customerEmail,
-                                        courseId: metadata.courseId
-                                    });
-                                }
-                            } catch (emailError) {
-                                ProductionLogger.error('Failed to send enrollment email (after retry)', {
-                                    error: emailError instanceof Error ? emailError.message : 'Unknown error',
-                                    email: customerEmail
-                                });
                             }
                         } else {
                             // Queue for later retry
