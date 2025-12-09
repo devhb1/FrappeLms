@@ -49,6 +49,8 @@ export default withAuth(
                     if (pathname.startsWith("/api/grants")) return true;
                     // Allow health check endpoint
                     if (pathname.startsWith("/api/health")) return true;
+                    // Allow Frappe user verification (for pre-enrollment email validation)
+                    if (pathname.startsWith("/api/verify-frappe-user")) return true;
                     // Require auth for other API endpoints
                     return !!token;
                 }
