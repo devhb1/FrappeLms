@@ -358,6 +358,7 @@ export interface FrappeUserCheckResponse {
         email: string;
         full_name?: string;
         username?: string;
+        enabled?: number;
     };
     registration_url?: string;
     error?: string;
@@ -425,22 +426,30 @@ export async function checkFrappeUserExists(
 
         ProductionLogger.info('Frappe user check response', {
             exists: result.message?.exists,
-            hasUserData: !!result.message?.user,
+            userEmail: result.message?.user_email,
+            fullName: result.message?.full_name,
+            enabled: result.message?.enabled,
             rawResponse: result
         });
 
+        // Response structure: { message: { success, exists, user_email, full_name, enabled } }
         if (result.message?.exists) {
             return {
                 success: true,
                 exists: true,
-                user: result.message.user
+                user: {
+                    email: result.message.user_email,
+                    full_name: result.message.full_name,
+                    username: result.message.user_email?.split('@')[0], // Extract username from email
+                    enabled: result.message.enabled
+                }
             };
         } else {
             return {
                 success: true,
                 exists: false,
                 registration_url: result.message?.registration_url ||
-                    `${FRAPPE_CONFIG.baseUrl}/register`
+                    `${FRAPPE_CONFIG.baseUrl}/signup`
             };
         }
 
