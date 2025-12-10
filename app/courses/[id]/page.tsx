@@ -451,15 +451,16 @@ export default function CourseDetailPage() {
     // handleCheckoutSuccess and handleCheckoutError removed - using direct API calls
 
     const handleStartEnrollment = async () => {
-        // MUST be verified first
-        if (!emailVerificationStatus.isVerified) {
-            toast({
-                title: "Email Not Verified",
-                description: "Please verify your email first by clicking the 'Validate Email' button.",
-                variant: "destructive"
-            });
-            return;
-        }
+        // ===== EMAIL VERIFICATION COMMENTED OUT =====
+        // Now relying on Frappe LMS to auto-create accounts if they don't exist
+        // if (!emailVerificationStatus.isVerified) {
+        //     toast({
+        //         title: "Email Not Verified",
+        //         description: "Please verify your email first by clicking the 'Validate Email' button.",
+        //         variant: "destructive"
+        //     });
+        //     return;
+        // }
 
         // Validate email
         if (!email.trim() && !lmsEmail.trim()) {
@@ -1284,7 +1285,7 @@ export default function CourseDetailPage() {
                                         ? "✅ Email pre-verified from your LMS account. Course access will be synced automatically."
                                         : emailVerificationStatus.isVerified
                                             ? "✅ Email verified! You can now proceed with enrollment."
-                                            : "Click 'Validate Email' to verify your Frappe LMS account before proceeding."
+                                            : "Frappe LMS will automatically create an account if you don't have one. You can optionally validate your email to check if an account exists."
                                     }
                                 </p>
                             </div>
@@ -1376,7 +1377,7 @@ export default function CourseDetailPage() {
                             <div className="flex gap-3">
                                 <Button
                                     onClick={handleStartEnrollment}
-                                    disabled={!emailVerificationStatus.isVerified || (!email.trim() && !lmsEmail.trim()) || validationState.hasSelfReferral || isLoading}
+                                    disabled={(!email.trim() && !lmsEmail.trim()) || validationState.hasSelfReferral || isLoading}
                                     className="flex-1 bg-orange-600 hover:bg-orange-700 text-white disabled:opacity-50"
                                 >
                                     {isLoading ? (
