@@ -173,7 +173,9 @@ const enrollmentSchema = new mongoose.Schema<IEnrollment>({
             validate: {
                 validator: function (value: number) {
                     // Ensure monetary precision (max 2 decimal places)
-                    return Number.isInteger(value * 100);
+                    // Round first to handle floating-point precision errors
+                    const cents = Math.round(value * 100);
+                    return Number.isInteger(cents);
                 },
                 message: 'Commission amount must have at most 2 decimal places'
             }

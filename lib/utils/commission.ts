@@ -35,8 +35,8 @@ export function calculateCommission(amount: number, rate: number): number {
     }
 
     // Calculate: (amount * rate / 100) with proper rounding
-    // Multiply by 100, round to integer, then divide by 100 for 2 decimal precision
-    const commission = Math.round((amount * rate / 100) * 100) / 100;
+    // Round to 2 decimal places to ensure monetary precision
+    const commission = Math.round((amount * rate) / 100 * 100) / 100;
 
     return commission;
 }
