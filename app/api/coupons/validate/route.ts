@@ -49,14 +49,14 @@ export async function POST(request: NextRequest) {
         if (grant.reservedAt && grant.reservedBy) {
             const now = new Date();
             const reservationExpiry = grant.reservationExpiry || new Date(grant.reservedAt.getTime() + 30 * 60 * 1000);
-            
+
             // If reservation is still valid and it's not the same user
             if (now < reservationExpiry && email && grant.reservedBy.toLowerCase() !== email.toLowerCase()) {
                 return NextResponse.json({
                     error: 'This coupon is currently being used by another user. Please try again in a few minutes.'
                 }, { status: 400 });
             }
-            
+
             // If reservation has expired, it's available (will be cleaned up during checkout)
             if (now >= reservationExpiry) {
                 ProductionLogger.info('Found expired reservation, coupon is available', {
