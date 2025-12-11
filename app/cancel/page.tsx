@@ -1,5 +1,7 @@
 "use client"
 
+import { useEffect } from "react"
+import { useSearchParams } from "next/navigation"
 import { SiteHeader } from "@/components/site-header"
 import { SiteFooter } from "@/components/site-footer"
 import { Button } from "@/components/ui/button"
@@ -8,10 +10,26 @@ import { XCircle, ArrowLeft, Mail, HelpCircle } from "lucide-react"
 import Link from "next/link"
 
 export default function CancelPage() {
+  const searchParams = useSearchParams()
+  const enrollmentId = searchParams.get('enrollment_id')
+
+  useEffect(() => {
+    // Unreserve grant coupon when user cancels checkout
+    if (enrollmentId) {
+      fetch('/api/cancel-enrollment', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enrollmentId })
+      }).catch(err => {
+        console.error('Failed to cancel enrollment:', err)
+      })
+    }
+  }, [enrollmentId])
+
   return (
     <div className="min-h-screen bg-background">
       <SiteHeader />
-      
+
       <main>
         <section className="py-20 bg-gradient-to-br from-gray-50 via-white to-gray-50/50 dark:from-gray-900 dark:via-gray-800 dark:to-gray-900">
           <div className="container mx-auto px-4">
@@ -21,11 +39,11 @@ export default function CancelPage() {
                   <div className="w-20 h-20 bg-gray-100 dark:bg-gray-700 rounded-full flex items-center justify-center mx-auto mb-6">
                     <XCircle className="w-12 h-12 text-gray-500 dark:text-gray-400" />
                   </div>
-                  
+
                   <h1 className="text-3xl md:text-4xl font-bold text-gray-900 dark:text-white mb-4">
                     Payment Cancelled
                   </h1>
-                  
+
                   <p className="text-xl text-gray-600 dark:text-gray-300 mb-8 leading-relaxed">
                     No worries! Your payment was cancelled and no charges were made to your account.
                   </p>
@@ -66,11 +84,11 @@ export default function CancelPage() {
                       <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
                         What would you like to do next?
                       </h3>
-                      
+
                       <div className="flex flex-col sm:flex-row gap-4">
-                        <Button 
-                          asChild 
-                          size="lg" 
+                        <Button
+                          asChild
+                          size="lg"
                           className="bg-orange-600 hover:bg-orange-700 text-white flex-1"
                         >
                           <Link href="/courses">
@@ -78,10 +96,10 @@ export default function CancelPage() {
                             Back to Courses
                           </Link>
                         </Button>
-                        
-                        <Button 
-                          asChild 
-                          variant="outline" 
+
+                        <Button
+                          asChild
+                          variant="outline"
                           size="lg"
                           className="flex-1"
                         >
@@ -124,8 +142,8 @@ export default function CancelPage() {
                     <div className="pt-6 border-t border-gray-200 dark:border-gray-700">
                       <p className="text-sm text-gray-500 dark:text-gray-400">
                         Questions about our courses or need help with enrollment?{' '}
-                        <a 
-                          href="mailto:support@maaledu.com" 
+                        <a
+                          href="mailto:support@maaledu.com"
                           className="text-orange-600 dark:text-orange-400 hover:underline"
                         >
                           Contact our support team

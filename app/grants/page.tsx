@@ -360,20 +360,20 @@ export default function GrantsPage() {
                                 <Label htmlFor="courseId" className="text-sm font-medium text-gray-700 dark:text-gray-300">
                                     Select Course *
                                 </Label>
-                                <Select 
-                                    onValueChange={handleSelectChange('courseId')} 
+                                <Select
+                                    onValueChange={handleSelectChange('courseId')}
                                     value={formData.courseId}
                                     disabled={isLoadingCourses}
                                 >
                                     <SelectTrigger className={`${errors.courseId ? 'border-red-500' : ''}`}>
-                                        <SelectValue 
+                                        <SelectValue
                                             placeholder={
-                                                isLoadingCourses 
-                                                    ? "Loading courses..." 
-                                                    : courses.length === 0 
-                                                        ? "No courses available" 
+                                                isLoadingCourses
+                                                    ? "Loading courses..."
+                                                    : courses.length === 0
+                                                        ? "No courses available"
                                                         : "Choose the course you want to apply for"
-                                            } 
+                                            }
                                         />
                                     </SelectTrigger>
                                     <SelectContent>

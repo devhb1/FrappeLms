@@ -889,40 +889,45 @@ async function processPartialDiscountCheckout(data: any) {
         grantId: grant._id
     });
 
-    // 1. ATOMIC COUPON RESERVATION - prevent duplicate usage
+    // 1. RESERVE (not mark as used) the coupon to prevent double usage during checkout
+    // It will be marked as USED by the webhook after successful payment
     const reservedGrant = await Grant.findOneAndUpdate(
         {
             _id: grant._id,
             status: 'approved',
             couponUsed: false,
-            email: email.toLowerCase()
+            email: email.toLowerCase(),
+            $or: [
+                { reservedAt: { $exists: false } }, // Not reserved yet
+                { reservedAt: { $lt: new Date(Date.now() - 30 * 60 * 1000) } } // Reserved > 30 min ago (expired)
+            ]
         },
         {
             $set: {
-                couponUsed: true,
-                couponUsedAt: new Date(),
-                couponUsedBy: email.toLowerCase(),
-                reservedAt: new Date()
+                reservedAt: new Date(),
+                reservedBy: email.toLowerCase(),
+                reservationExpiry: new Date(Date.now() + 30 * 60 * 1000) // 30 minutes from now
             }
         },
         { new: true }
     );
 
     if (!reservedGrant) {
-        ProductionLogger.warn('Partial grant coupon already used or unavailable', {
+        ProductionLogger.warn('Partial grant coupon already reserved or used', {
             grantId: grant._id,
             email
         });
         return NextResponse.json({
-            error: 'This coupon has already been used or is no longer available',
-            code: 'COUPON_UNAVAILABLE',
-            retryable: false
+            error: 'This coupon is currently being used or has been used already',
+            code: 'COUPON_RESERVED',
+            retryable: true // User can retry after reservation expires
         }, { status: 400 });
     }
 
-    ProductionLogger.info('Partial grant coupon atomically reserved', {
+    ProductionLogger.info('Partial grant coupon reserved (not used yet - will be marked as used after payment)', {
         grantId: reservedGrant._id,
-        email
+        email,
+        reservationExpiry: reservedGrant.reservationExpiry
     });
 
     // 2. Find or create affiliate for commission tracking
@@ -1006,7 +1011,8 @@ async function processPartialDiscountCheckout(data: any) {
             source: 'checkout_api',
             userAgent: 'web',
             createdAt: new Date(),
-            discountType: 'partial_grant'
+            discountType: 'partial_grant',
+            grantReservedNotUsed: true // Flag to indicate grant is only reserved, not used yet
         }
     });
 
@@ -1057,7 +1063,9 @@ async function processPartialDiscountCheckout(data: any) {
             originalPrice: originalPrice.toFixed(2),
             finalPrice: roundedFinalPrice.toFixed(2),
             discountPercentage,
-            stripeAmount
+            stripeAmount,
+            grantReserved: true,
+            willBeMarkedUsedOnPayment: true
         });
 
         return NextResponse.json({
@@ -1086,20 +1094,19 @@ async function processPartialDiscountCheckout(data: any) {
         });
 
         try {
-            // Rollback grant reservation atomically
+            // Rollback grant reservation (unreserve it)
             await Grant.findByIdAndUpdate(reservedGrant._id, {
                 $unset: {
-                    couponUsed: 1,
-                    couponUsedAt: 1,
-                    couponUsedBy: 1,
-                    reservedAt: 1
+                    reservedAt: 1,
+                    reservedBy: 1,
+                    reservationExpiry: 1
                 }
             });
 
             // Delete pending enrollment record
             await Enrollment.findByIdAndDelete(savedEnrollment._id);
 
-            ProductionLogger.info('Rollback completed successfully', {
+            ProductionLogger.info('Rollback completed successfully - grant unreserved', {
                 grantId: reservedGrant._id,
                 couponCode: reservedGrant.couponCode
             });

@@ -282,19 +282,36 @@ export async function POST(req: NextRequest) {
                 stripeEventsCount: updatedEnrollment.stripeEvents?.length || 0
             });
 
-            // Handle partial grant coupon marking as used
+            // Handle partial grant coupon marking as used after successful payment
             if (updatedEnrollment.enrollmentType === 'partial_grant' && updatedEnrollment.grantData?.grantId) {
                 try {
                     const { Grant } = await import('@/lib/models/grant');
                     await Grant.findByIdAndUpdate(updatedEnrollment.grantData.grantId, {
-                        couponUsed: true,
-                        couponUsedAt: new Date(),
-                        couponUsedBy: customerEmail,
-                        enrollmentId: updatedEnrollment._id
+                        $set: {
+                            couponUsed: true,
+                            couponUsedAt: new Date(),
+                            couponUsedBy: customerEmail,
+                            enrollmentId: updatedEnrollment._id
+                        },
+                        $unset: {
+                            reservedAt: 1,
+                            reservedBy: 1,
+                            reservationExpiry: 1
+                        }
                     });
-                    console.log(`✅ Partial grant coupon marked as used: ${updatedEnrollment.grantData.grantId}`);
+                    console.log(`✅ Partial grant coupon marked as used after payment: ${updatedEnrollment.grantData.grantId}`);
+                    ProductionLogger.info('Partial grant coupon finalized', {
+                        grantId: updatedEnrollment.grantData.grantId,
+                        couponCode: updatedEnrollment.grantData.couponCode,
+                        previouslyReserved: true,
+                        nowMarkedUsed: true
+                    });
                 } catch (grantError) {
                     console.error(`❌ Failed to mark grant coupon as used:`, grantError);
+                    ProductionLogger.error('Grant update failed in webhook', {
+                        error: grantError instanceof Error ? grantError.message : 'Unknown',
+                        grantId: updatedEnrollment.grantData.grantId
+                    });
                     // Don't fail the enrollment if grant update fails
                 }
             }
