@@ -285,16 +285,33 @@ async function processCouponEnrollment(data: any) {
     });
 
     // 1. Find the grant first (without reserving it yet)
-    const grant = await Grant.findOne({
-        couponCode: couponCode.toUpperCase(),
-        status: 'approved',
-        couponUsed: false,
-        email: email.toLowerCase()
-    });
+    let grant;
+    try {
+        grant = await Grant.findOne({
+            couponCode: couponCode.toUpperCase(),
+            status: 'approved',
+            couponUsed: false,
+            email: email.toLowerCase()
+        });
 
-    ProductionLogger.info('Grant lookup result', {
-        found: grant ? 'YES' : 'NO'
-    });
+        ProductionLogger.info('Grant lookup result', {
+            found: grant ? 'YES' : 'NO',
+            couponCode: couponCode.toUpperCase(),
+            email: email.toLowerCase()
+        });
+    } catch (grantError) {
+        ProductionLogger.error('Grant lookup failed', {
+            error: grantError instanceof Error ? grantError.message : 'Unknown',
+            stack: grantError instanceof Error ? grantError.stack : undefined,
+            couponCode: couponCode.toUpperCase(),
+            email: email.toLowerCase()
+        });
+        return NextResponse.json({
+            error: 'Failed to validate coupon. Please try again.',
+            code: 'GRANT_LOOKUP_FAILED',
+            retryable: true
+        }, { status: 500 });
+    }
 
     if (grant) {
         ProductionLogger.info('Grant found', {
@@ -305,7 +322,10 @@ async function processCouponEnrollment(data: any) {
             couponUsed: grant.couponUsed,
             courseId: grant.courseId,
             discountPercentage: grant.discountPercentage || 100,
-            requiresPayment: grant.requiresPayment || false
+            requiresPayment: grant.requiresPayment || false,
+            reservedAt: grant.reservedAt,
+            reservedBy: grant.reservedBy,
+            reservationExpiry: grant.reservationExpiry
         });
     } else {
         // Debug: Let's see what grants exist for this user
@@ -365,6 +385,20 @@ async function processCouponEnrollment(data: any) {
             code: 'COUPON_EXPIRED',
             retryable: false
         }, { status: 400 });
+    }
+
+    // 3. Validate course price before calculation
+    if (!course.price || typeof course.price !== 'number' || course.price <= 0) {
+        ProductionLogger.error('Invalid course price', {
+            courseId: course.courseId,
+            price: course.price,
+            priceType: typeof course.price
+        });
+        return NextResponse.json({
+            error: 'Course price information is invalid. Please contact support.',
+            code: 'INVALID_COURSE_PRICE',
+            retryable: false
+        }, { status: 500 });
     }
 
     // 3. Calculate discount amounts with proper rounding
@@ -898,6 +932,31 @@ async function processPartialDiscountCheckout(data: any) {
         originalPrice, finalPrice, discountPercentage, discountAmount, redirectSource
     } = data;
 
+    // Validate all required data
+    if (!course || !course.title) {
+        ProductionLogger.error('Invalid course data in processPartialDiscountCheckout', {
+            hasCourse: !!course,
+            courseKeys: course ? Object.keys(course) : []
+        });
+        return NextResponse.json({
+            error: 'Invalid course information. Please try again.',
+            code: 'INVALID_COURSE_DATA',
+            retryable: true
+        }, { status: 500 });
+    }
+
+    if (!grant || !grant._id) {
+        ProductionLogger.error('Invalid grant data in processPartialDiscountCheckout', {
+            hasGrant: !!grant,
+            grantKeys: grant ? Object.keys(grant) : []
+        });
+        return NextResponse.json({
+            error: 'Invalid coupon information. Please try again.',
+            code: 'INVALID_GRANT_DATA',
+            retryable: true
+        }, { status: 500 });
+    }
+
     ProductionLogger.info('Processing partial discount checkout', {
         originalPrice,
         finalPrice,
@@ -908,7 +967,9 @@ async function processPartialDiscountCheckout(data: any) {
         grantStatus: grant.status,
         grantCouponUsed: grant.couponUsed,
         grantReservedAt: grant.reservedAt,
-        grantReservedBy: grant.reservedBy
+        grantReservedBy: grant.reservedBy,
+        courseTitle: course.title,
+        courseId: courseId
     });
 
     // 1. RESERVE (not mark as used) the coupon to prevent double usage during checkout
