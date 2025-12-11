@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -12,8 +12,17 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { GraduationCap, Users, ArrowLeft, CheckCircle, AlertCircle, Send } from 'lucide-react';
 import Link from 'next/link';
-import { COURSES } from '@/lib/courses';
 import { getLMSRegistrationUrl } from '@/lib/config/lms';
+
+interface Course {
+    _id: string;
+    courseId: string;
+    title: string;
+    price: number;
+    duration: string;
+    level: string;
+    description?: string;
+}
 
 /**
  * Grant Application Page
@@ -44,6 +53,8 @@ interface FormErrors {
 }
 
 export default function GrantsPage() {
+    const [courses, setCourses] = useState<Course[]>([]);
+    const [isLoadingCourses, setIsLoadingCourses] = useState(true);
     const [formData, setFormData] = useState<FormData>({
         name: '',
         email: '',
@@ -58,6 +69,26 @@ export default function GrantsPage() {
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [isSubmitted, setIsSubmitted] = useState(false);
     const router = useRouter();
+
+    // Fetch active courses from database
+    useEffect(() => {
+        const fetchCourses = async () => {
+            try {
+                setIsLoadingCourses(true);
+                const response = await fetch('/api/courses?sortBy=custom');
+                if (response.ok) {
+                    const data = await response.json();
+                    setCourses(data.courses || []);
+                }
+            } catch (error) {
+                console.error('Failed to fetch courses:', error);
+            } finally {
+                setIsLoadingCourses(false);
+            }
+        };
+
+        fetchCourses();
+    }, []);
 
     // Form validation
     const validateForm = (): boolean => {
@@ -183,7 +214,7 @@ export default function GrantsPage() {
 
     // Success state
     if (isSubmitted) {
-        const selectedCourse = COURSES.find(course => course.courseId === formData.courseId);
+        const selectedCourse = courses.find(course => course.courseId === formData.courseId);
 
         return (
             <div className="min-h-screen bg-gradient-to-br from-green-50 to-green-100 dark:from-gray-900 dark:to-gray-800 flex items-center justify-center p-4">
@@ -329,12 +360,24 @@ export default function GrantsPage() {
                                 <Label htmlFor="courseId" className="text-sm font-medium text-gray-700 dark:text-gray-300">
                                     Select Course *
                                 </Label>
-                                <Select onValueChange={handleSelectChange('courseId')} value={formData.courseId}>
+                                <Select 
+                                    onValueChange={handleSelectChange('courseId')} 
+                                    value={formData.courseId}
+                                    disabled={isLoadingCourses}
+                                >
                                     <SelectTrigger className={`${errors.courseId ? 'border-red-500' : ''}`}>
-                                        <SelectValue placeholder="Choose the course you want to apply for" />
+                                        <SelectValue 
+                                            placeholder={
+                                                isLoadingCourses 
+                                                    ? "Loading courses..." 
+                                                    : courses.length === 0 
+                                                        ? "No courses available" 
+                                                        : "Choose the course you want to apply for"
+                                            } 
+                                        />
                                     </SelectTrigger>
                                     <SelectContent>
-                                        {COURSES.map((course) => (
+                                        {courses.map((course) => (
                                             <SelectItem key={course.courseId} value={course.courseId}>
                                                 <div className="flex flex-col">
                                                     <span className="font-medium">{course.title}</span>
@@ -347,6 +390,9 @@ export default function GrantsPage() {
                                     </SelectContent>
                                 </Select>
                                 {errors.courseId && <p className="text-sm text-red-600">{errors.courseId}</p>}
+                                {!isLoadingCourses && courses.length === 0 && (
+                                    <p className="text-sm text-orange-600">No active courses available at the moment. Please check back later.</p>
+                                )}
                             </div>
 
                             {/* Personal Information */}
