@@ -62,6 +62,19 @@ export async function POST(request: NextRequest) {
     }
 
     try {
+        // CRITICAL: Verify Stripe is initialized
+        if (!stripe) {
+            ProductionLogger.error('Stripe not initialized', {
+                hasStripeSecretKey: !!process.env.STRIPE_SECRET_KEY,
+                nodeEnv: process.env.NODE_ENV
+            });
+            return NextResponse.json({
+                error: 'Payment system is temporarily unavailable. Please try again in a few moments.',
+                code: 'STRIPE_NOT_INITIALIZED',
+                retryable: true
+            }, { status: 503 }); // 503 Service Unavailable
+        }
+
         // 1. Parse and validate request
         const body = await request.json();
         ProductionLogger.debug('Raw request body received', { hasBody: !!body });
