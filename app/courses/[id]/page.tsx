@@ -118,6 +118,67 @@ export default function CourseDetailPage() {
     // Support both 'ref' and 'affiliate_email' URL params
     const [affiliateId, setAffiliateId] = useState(searchParams.get('ref') || lmsRedirectData.affiliate_email || '');
 
+    // Add validation state for self-referral
+    const [validationState, setValidationState] = useState({
+        hasSelfReferral: false,
+        validationMessage: ''
+    });
+
+    const [couponCode, setCouponCode] = useState('');
+    const [couponStatus, setCouponStatus] = useState<{
+        isValid: boolean | null;
+        message: string;
+        isChecking: boolean;
+        appliedDiscount?: number;
+        finalPrice?: number;
+        originalPrice?: number;
+    }>({
+        isValid: null,
+        message: '',
+        isChecking: false
+    });
+    const [isLoading, setIsLoading] = useState(false);
+    const [isDialogOpen, setIsDialogOpen] = useState(false);
+    const [useEnhancedFlow, setUseEnhancedFlow] = useState(false); // Track if using enhanced checkout flow
+
+    // Email verification states
+    const [emailVerificationStatus, setEmailVerificationStatus] = useState<{
+        isVerifying: boolean;
+        isVerified: boolean;
+        frappeUser: any | null;
+        error: string | null;
+    }>({
+        isVerifying: false,
+        isVerified: false,
+        frappeUser: null,
+        error: null
+    });
+
+    const { toast } = useToast();
+
+    // Enhanced state management for enrollment
+    const [enrollmentState, setEnrollmentState] = useState<{
+        isProcessing: boolean;
+        requestId: string | null;
+        lastAttempt: Date | null;
+    }>({
+        isProcessing: false,
+        requestId: null,
+        lastAttempt: null
+    });
+
+    const [retryState, setRetryState] = useState<{
+        count: number;
+        lastError: any | null;
+        canRetry: boolean;
+        errorCode?: string;
+        suggestions?: string[];
+    }>({
+        count: 0,
+        lastError: null,
+        canRetry: true
+    });
+
     // Update form fields when URL parameters change
     useEffect(() => {
         const newUrlEmail = searchParams.get('usermail') || searchParams.get('useremail') || searchParams.get('email') || lmsRedirectData.frappe_email || '';
@@ -182,67 +243,6 @@ export default function CourseDetailPage() {
             });
         }
     }, [email, lmsEmail, affiliateId, toast]);
-
-    // Add validation state for self-referral
-    const [validationState, setValidationState] = useState({
-        hasSelfReferral: false,
-        validationMessage: ''
-    });
-
-    const [couponCode, setCouponCode] = useState('');
-    const [couponStatus, setCouponStatus] = useState<{
-        isValid: boolean | null;
-        message: string;
-        isChecking: boolean;
-        appliedDiscount?: number;
-        finalPrice?: number;
-        originalPrice?: number;
-    }>({
-        isValid: null,
-        message: '',
-        isChecking: false
-    });
-    const [isLoading, setIsLoading] = useState(false);
-    const [isDialogOpen, setIsDialogOpen] = useState(false);
-    const [useEnhancedFlow, setUseEnhancedFlow] = useState(false); // Track if using enhanced checkout flow
-
-    // Email verification states
-    const [emailVerificationStatus, setEmailVerificationStatus] = useState<{
-        isVerifying: boolean;
-        isVerified: boolean;
-        frappeUser: any | null;
-        error: string | null;
-    }>({
-        isVerifying: false,
-        isVerified: false,
-        frappeUser: null,
-        error: null
-    });
-
-    const { toast } = useToast();
-
-    // Enhanced state management for enrollment
-    const [enrollmentState, setEnrollmentState] = useState<{
-        isProcessing: boolean;
-        requestId: string | null;
-        lastAttempt: Date | null;
-    }>({
-        isProcessing: false,
-        requestId: null,
-        lastAttempt: null
-    });
-
-    const [retryState, setRetryState] = useState<{
-        count: number;
-        lastError: any | null;
-        canRetry: boolean;
-        errorCode?: string;
-        suggestions?: string[];
-    }>({
-        count: 0,
-        lastError: null,
-        canRetry: true
-    });
 
     // Handle LMS redirects and course loading
     useEffect(() => {
