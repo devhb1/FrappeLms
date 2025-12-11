@@ -38,11 +38,33 @@ export async function POST(request: NextRequest) {
             }, { status: 400 });
         }
 
-        // Check if coupon is already used
+        // Check if coupon is already used (final usage, not just reserved)
         if (grant.couponUsed) {
             return NextResponse.json({
                 error: 'This coupon has already been used'
             }, { status: 400 });
+        }
+
+        // Check if coupon is currently reserved by someone else
+        if (grant.reservedAt && grant.reservedBy) {
+            const now = new Date();
+            const reservationExpiry = grant.reservationExpiry || new Date(grant.reservedAt.getTime() + 30 * 60 * 1000);
+            
+            // If reservation is still valid and it's not the same user
+            if (now < reservationExpiry && email && grant.reservedBy.toLowerCase() !== email.toLowerCase()) {
+                return NextResponse.json({
+                    error: 'This coupon is currently being used by another user. Please try again in a few minutes.'
+                }, { status: 400 });
+            }
+            
+            // If reservation has expired, it's available (will be cleaned up during checkout)
+            if (now >= reservationExpiry) {
+                ProductionLogger.info('Found expired reservation, coupon is available', {
+                    grantId: grant._id,
+                    reservedAt: grant.reservedAt,
+                    reservationExpiry: reservationExpiry
+                });
+            }
         }
 
         // Check if coupon is for the correct course
