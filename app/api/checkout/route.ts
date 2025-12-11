@@ -178,7 +178,9 @@ export async function POST(request: NextRequest) {
     } catch (error) {
         ProductionLogger.error('Checkout error', {
             error: error instanceof Error ? error.message : 'Unknown error',
-            stack: error instanceof Error ? error.stack : undefined
+            stack: error instanceof Error ? error.stack : undefined,
+            errorType: error?.constructor?.name,
+            errorDetails: JSON.stringify(error, Object.getOwnPropertyNames(error))
         });
 
         if (error instanceof z.ZodError) {
@@ -211,10 +213,20 @@ export async function POST(request: NextRequest) {
             }, { status: 400 });
         }
 
+        // Return more details in development
+        const isDevelopment = process.env.NODE_ENV === 'development';
+
         return NextResponse.json({
             error: 'An error occurred processing your request',
             code: 'CHECKOUT_ERROR',
-            userMessage: 'Something went wrong. Please try again or contact support.'
+            userMessage: 'Something went wrong. Please try again or contact support.',
+            retryable: true,
+            ...(isDevelopment && {
+                debug: {
+                    message: error instanceof Error ? error.message : 'Unknown error',
+                    type: error?.constructor?.name
+                }
+            })
         }, { status: 500 });
     }
 }
@@ -375,7 +387,11 @@ async function processCouponEnrollment(data: any) {
         // Partial discount - route to Stripe checkout with discounted price
         // Pass the grant WITHOUT marking it as used yet (will be marked in processPartialDiscountCheckout)
         return await processPartialDiscountCheckout({
-            ...data,
+            courseId,
+            email,
+            course,
+            affiliateEmail,
+            redirectSource: data.redirectSource || 'direct',
             grant: grant, // Pass the unreserved grant
             originalPrice,
             finalPrice,
@@ -434,9 +450,9 @@ async function processCouponEnrollment(data: any) {
 
         // LMS integration data
         lmsContext: {
-            frappeUsername: data.username || email.split('@')[0],
+            frappeUsername: email.split('@')[0],
             frappeEmail: email,
-            redirectSource: data.affiliateEmail ? 'affiliate' : data.redirectSource || 'direct'
+            redirectSource: affiliateEmail ? 'affiliate' : (data.redirectSource || 'direct')
         },
 
         // Grant data with enhanced discount tracking
@@ -879,56 +895,80 @@ async function recordAffiliateActivity(affiliateEmail: string, action: string, e
 async function processPartialDiscountCheckout(data: any) {
     const {
         courseId, email, course, affiliateEmail, grant,
-        originalPrice, finalPrice, discountPercentage, discountAmount
+        originalPrice, finalPrice, discountPercentage, discountAmount, redirectSource
     } = data;
 
     ProductionLogger.info('Processing partial discount checkout', {
         originalPrice,
         finalPrice,
         discountPercentage,
-        grantId: grant._id
+        grantId: grant._id,
+        email: email,
+        grantEmail: grant.email,
+        grantStatus: grant.status,
+        grantCouponUsed: grant.couponUsed,
+        grantReservedAt: grant.reservedAt,
+        grantReservedBy: grant.reservedBy
     });
 
     // 1. RESERVE (not mark as used) the coupon to prevent double usage during checkout
     // It will be marked as USED by the webhook after successful payment
-    const reservedGrant = await Grant.findOneAndUpdate(
-        {
-            _id: grant._id,
-            status: 'approved',
-            couponUsed: false,
-            email: email.toLowerCase(),
-            $or: [
-                { reservedAt: { $exists: false } }, // Not reserved yet
-                { reservedAt: { $lt: new Date(Date.now() - 30 * 60 * 1000) } } // Reserved > 30 min ago (expired)
-            ]
-        },
-        {
-            $set: {
-                reservedAt: new Date(),
-                reservedBy: email.toLowerCase(),
-                reservationExpiry: new Date(Date.now() + 30 * 60 * 1000) // 30 minutes from now
-            }
-        },
-        { new: true }
-    );
 
-    if (!reservedGrant) {
-        ProductionLogger.warn('Partial grant coupon already reserved or used', {
+    let reservedGrant;
+    try {
+        reservedGrant = await Grant.findOneAndUpdate(
+            {
+                _id: grant._id,
+                status: 'approved',
+                couponUsed: false,
+                email: email.toLowerCase(),
+                $or: [
+                    { reservedAt: { $exists: false } }, // Not reserved yet
+                    { reservedAt: { $lt: new Date(Date.now() - 30 * 60 * 1000) } } // Reserved > 30 min ago (expired)
+                ]
+            },
+            {
+                $set: {
+                    reservedAt: new Date(),
+                    reservedBy: email.toLowerCase(),
+                    reservationExpiry: new Date(Date.now() + 30 * 60 * 1000) // 30 minutes from now
+                }
+            },
+            { new: true }
+        );
+
+        if (!reservedGrant) {
+            ProductionLogger.warn('Partial grant coupon already reserved or used', {
+                grantId: grant._id,
+                email,
+                queryConditions: {
+                    _id: grant._id,
+                    status: 'approved',
+                    couponUsed: false,
+                    email: email.toLowerCase()
+                }
+            });
+            return NextResponse.json({
+                error: 'This coupon is currently being used or has been used already',
+                code: 'COUPON_RESERVED',
+                retryable: true // User can retry after reservation expires
+            }, { status: 400 });
+        }
+
+        ProductionLogger.info('Partial grant coupon reserved (not used yet - will be marked as used after payment)', {
+            grantId: reservedGrant._id,
+            email,
+            reservationExpiry: reservedGrant.reservationExpiry
+        });
+    } catch (dbError) {
+        ProductionLogger.error('Database error during grant reservation', {
+            error: dbError instanceof Error ? dbError.message : 'Unknown error',
+            stack: dbError instanceof Error ? dbError.stack : undefined,
             grantId: grant._id,
             email
         });
-        return NextResponse.json({
-            error: 'This coupon is currently being used or has been used already',
-            code: 'COUPON_RESERVED',
-            retryable: true // User can retry after reservation expires
-        }, { status: 400 });
+        throw new Error('Failed to reserve grant coupon. Please try again.');
     }
-
-    ProductionLogger.info('Partial grant coupon reserved (not used yet - will be marked as used after payment)', {
-        grantId: reservedGrant._id,
-        email,
-        reservationExpiry: reservedGrant.reservationExpiry
-    });
 
     // 2. Find or create affiliate for commission tracking
     let affiliate = null;
@@ -941,6 +981,11 @@ async function processPartialDiscountCheckout(data: any) {
             ProductionLogger.info('Valid affiliate found for partial discount', {
                 affiliateName: affiliate.name,
                 affiliateEmail: affiliate.email
+            });
+        } else {
+            ProductionLogger.warn('Invalid affiliate email provided for partial discount', {
+                affiliateEmail,
+                enrollmentType: 'partial_grant'
             });
         }
     }
@@ -966,9 +1011,9 @@ async function processPartialDiscountCheckout(data: any) {
 
         // LMS integration data
         lmsContext: {
-            frappeUsername: data.username || email.split('@')[0],
+            frappeUsername: email.split('@')[0],
             frappeEmail: email,
-            redirectSource: affiliate ? 'affiliate' : data.redirectSource || 'direct'
+            redirectSource: redirectSource || (affiliate ? 'affiliate' : 'direct')
         },
 
         // Enhanced grant data for partial discounts
