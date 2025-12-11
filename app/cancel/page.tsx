@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect } from "react"
+import { useEffect, Suspense } from "react"
 import { useSearchParams } from "next/navigation"
 import { SiteHeader } from "@/components/site-header"
 import { SiteFooter } from "@/components/site-footer"
@@ -9,7 +9,7 @@ import { Card, CardContent } from "@/components/ui/card"
 import { XCircle, ArrowLeft, Mail, HelpCircle } from "lucide-react"
 import Link from "next/link"
 
-export default function CancelPage() {
+function CancelContent() {
   const searchParams = useSearchParams()
   const enrollmentId = searchParams.get('enrollment_id')
 
@@ -160,5 +160,20 @@ export default function CancelPage() {
 
       <SiteFooter />
     </div>
+  )
+}
+
+export default function CancelPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-16 h-16 border-4 border-orange-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-gray-600 dark:text-gray-400">Loading...</p>
+        </div>
+      </div>
+    }>
+      <CancelContent />
+    </Suspense>
   )
 }
