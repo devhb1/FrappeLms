@@ -435,8 +435,20 @@ async function processCouponEnrollment(data: any) {
             discountAmount: discountAmount
         },
 
+        // Affiliate data for free enrollments (tracking only, no commission)
+        affiliateData: data.affiliateEmail ? {
+            affiliateEmail: data.affiliateEmail.toLowerCase(),
+            commissionEligible: false, // Free enrollments don't earn commission
+            commissionRate: 0,
+            commissionAmount: 0,
+            referralSource: 'grant_with_affiliate',
+            referralTimestamp: new Date(),
+            commissionProcessed: true, // Mark as processed since no commission
+            commissionPaid: false
+        } : undefined,
+
         // Track referral source for free enrollments (no commission but track referral)
-        referralSource: data.affiliateEmail ? 'affiliate_link' : 'direct',
+        referralSource: data.affiliateEmail ? 'grant_with_affiliate' : 'direct',
         hasReferral: !!data.affiliateEmail,
 
         // Payment method
@@ -713,8 +725,11 @@ async function processStripeCheckout(data: any) {
             commissionEligible: true,
             commissionRate: affiliate.commissionRate || 10,
             commissionAmount: calculateCommission(course.price, affiliate.commissionRate || 10),
-            referralSource: 'affiliate_link'
-        } : null,
+            referralSource: 'affiliate_link',
+            referralTimestamp: new Date(),
+            commissionProcessed: false,
+            commissionPaid: false
+        } : undefined,
 
         // Commission base amount for accurate calculations
         originalAmount: course.price,
@@ -944,8 +959,11 @@ async function processPartialDiscountCheckout(data: any) {
             commissionEligible: true,
             commissionRate: affiliate.commissionRate || 10,
             commissionAmount: Math.round((finalPrice * (affiliate.commissionRate || 10)) / 100 * 100) / 100,
-            referralSource: 'affiliate_link'
-        } : null,
+            referralSource: 'affiliate_link',
+            referralTimestamp: new Date(),
+            commissionProcessed: false,
+            commissionPaid: false
+        } : undefined,
 
         // Store both amounts for tracking
         originalAmount: originalPrice,
