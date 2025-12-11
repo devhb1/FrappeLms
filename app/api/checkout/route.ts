@@ -272,42 +272,28 @@ async function processCouponEnrollment(data: any) {
         courseId
     });
 
-    // 1. Atomically reserve grant coupon to prevent race conditions
-    const reservedGrant = await Grant.findOneAndUpdate(
-        {
-            couponCode: couponCode.toUpperCase(),
-            status: 'approved',
-            couponUsed: false,
-            email: email.toLowerCase()
-        },
-        {
-            $set: {
-                couponUsed: true,
-                couponUsedAt: new Date(),
-                couponUsedBy: email.toLowerCase(),
-                reservedAt: new Date()
-            }
-        },
-        {
-            new: true,
-            runValidators: true
-        }
-    );
-
-    ProductionLogger.info('Grant atomic reservation result', {
-        found: reservedGrant ? 'RESERVED' : 'NOT AVAILABLE'
+    // 1. Find the grant first (without reserving it yet)
+    const grant = await Grant.findOne({
+        couponCode: couponCode.toUpperCase(),
+        status: 'approved',
+        couponUsed: false,
+        email: email.toLowerCase()
     });
 
-    if (reservedGrant) {
-        ProductionLogger.info('Grant successfully reserved', {
-            id: reservedGrant._id,
-            email: reservedGrant.email,
-            couponCode: reservedGrant.couponCode,
-            status: reservedGrant.status,
-            couponUsed: reservedGrant.couponUsed,
-            courseId: reservedGrant.courseId,
-            discountPercentage: reservedGrant.discountPercentage || 100,
-            requiresPayment: reservedGrant.requiresPayment || false
+    ProductionLogger.info('Grant lookup result', {
+        found: grant ? 'YES' : 'NO'
+    });
+
+    if (grant) {
+        ProductionLogger.info('Grant found', {
+            id: grant._id,
+            email: grant.email,
+            couponCode: grant.couponCode,
+            status: grant.status,
+            couponUsed: grant.couponUsed,
+            courseId: grant.courseId,
+            discountPercentage: grant.discountPercentage || 100,
+            requiresPayment: grant.requiresPayment || false
         });
     } else {
         // Debug: Let's see what grants exist for this user
@@ -339,7 +325,7 @@ async function processCouponEnrollment(data: any) {
         }
     }
 
-    if (!reservedGrant) {
+    if (!grant) {
         return NextResponse.json({
             error: 'Coupon is no longer available (already used or invalid)',
             code: 'COUPON_UNAVAILABLE',
@@ -355,21 +341,11 @@ async function processCouponEnrollment(data: any) {
         }, { status: 400 });
     }
 
-    // 2. Check for coupon expiration (if somehow an expired coupon got reserved)
-    if (reservedGrant.couponMetadata?.expiresAt && new Date() > new Date(reservedGrant.couponMetadata.expiresAt)) {
-        // Rollback the reservation since coupon is expired
-        await Grant.findByIdAndUpdate(reservedGrant._id, {
-            $unset: {
-                couponUsed: 1,
-                couponUsedAt: 1,
-                couponUsedBy: 1,
-                reservedAt: 1
-            }
-        });
-
-        ProductionLogger.warn('Coupon expired after reservation, rolled back', {
+    // 2. Check for coupon expiration
+    if (grant.couponMetadata?.expiresAt && new Date() > new Date(grant.couponMetadata.expiresAt)) {
+        ProductionLogger.warn('Coupon expired', {
             couponCode: couponCode.toUpperCase(),
-            expiresAt: reservedGrant.couponMetadata.expiresAt,
+            expiresAt: grant.couponMetadata.expiresAt,
             currentTime: new Date()
         });
         return NextResponse.json({
@@ -379,12 +355,12 @@ async function processCouponEnrollment(data: any) {
         }, { status: 400 });
     }
 
-    // 3. Calculate discount amounts
-    const discountPercentage = reservedGrant.discountPercentage || 100;
-    const originalPrice = course.price;
-    const discountAmount = Math.round((originalPrice * discountPercentage) / 100 * 100) / 100;
-    const finalPrice = Math.round((originalPrice - discountAmount) * 100) / 100;
-    const requiresPayment = reservedGrant.requiresPayment || (discountPercentage < 100);
+    // 3. Calculate discount amounts with proper rounding
+    const discountPercentage = grant.discountPercentage || 100;
+    const originalPrice = parseFloat(course.price.toFixed(2));
+    const discountAmount = parseFloat(((originalPrice * discountPercentage) / 100).toFixed(2));
+    const finalPrice = parseFloat((originalPrice - discountAmount).toFixed(2));
+    const requiresPayment = grant.requiresPayment || (discountPercentage < 100 && finalPrice > 0);
 
     ProductionLogger.info('Discount calculation', {
         originalPrice,
@@ -397,9 +373,10 @@ async function processCouponEnrollment(data: any) {
     // 4. Route to appropriate enrollment flow
     if (requiresPayment && finalPrice > 0) {
         // Partial discount - route to Stripe checkout with discounted price
+        // Pass the grant WITHOUT marking it as used yet (will be marked in processPartialDiscountCheckout)
         return await processPartialDiscountCheckout({
             ...data,
-            grant: reservedGrant,
+            grant: grant, // Pass the unreserved grant
             originalPrice,
             finalPrice,
             discountPercentage,
@@ -407,7 +384,45 @@ async function processCouponEnrollment(data: any) {
         });
     }
 
-    // 5. Process free enrollment (100% discount)
+    // 5. For 100% discount, atomically reserve the grant now
+    const reservedGrant = await Grant.findOneAndUpdate(
+        {
+            _id: grant._id,
+            status: 'approved',
+            couponUsed: false,
+            email: email.toLowerCase()
+        },
+        {
+            $set: {
+                couponUsed: true,
+                couponUsedAt: new Date(),
+                couponUsedBy: email.toLowerCase(),
+                reservedAt: new Date()
+            }
+        },
+        {
+            new: true,
+            runValidators: true
+        }
+    );
+
+    if (!reservedGrant) {
+        ProductionLogger.warn('100% grant coupon race condition detected', {
+            grantId: grant._id
+        });
+        return NextResponse.json({
+            error: 'Coupon is no longer available (already used)',
+            code: 'COUPON_UNAVAILABLE',
+            retryable: false
+        }, { status: 400 });
+    }
+
+    ProductionLogger.info('100% grant successfully reserved', {
+        id: reservedGrant._id,
+        email: reservedGrant.email
+    });
+
+    // 6. Process free enrollment (100% discount)
     const enrollment = new Enrollment({
         courseId: courseId,
         email: email.toLowerCase(),
@@ -925,12 +940,22 @@ async function processPartialDiscountCheckout(data: any) {
         }
     }
 
-    // 2. Create pending enrollment record for partial discount
+    // 3. Ensure proper rounding for Stripe (cents must be whole number)
+    const roundedFinalPrice = parseFloat(finalPrice.toFixed(2));
+    const stripeAmount = Math.round(roundedFinalPrice * 100); // Convert to cents
+
+    ProductionLogger.info('Stripe amount calculation', {
+        finalPrice: roundedFinalPrice,
+        stripeAmount,
+        stripeDollars: (stripeAmount / 100).toFixed(2)
+    });
+
+    // 4. Create pending enrollment record for partial discount
     const enrollment = new Enrollment({
         courseId: courseId,
         email: email.toLowerCase(),
         paymentId: `PARTIAL_PENDING_${Date.now()}`,
-        amount: finalPrice, // Discounted amount to pay
+        amount: roundedFinalPrice, // Discounted amount to pay
         status: 'pending',
         enrollmentType: 'partial_grant',
 
@@ -947,9 +972,9 @@ async function processPartialDiscountCheckout(data: any) {
             couponCode: reservedGrant.couponCode,
             grantVerified: true,
             discountPercentage: discountPercentage,
-            originalPrice: originalPrice,
-            finalPrice: finalPrice,
-            discountAmount: discountAmount,
+            originalPrice: parseFloat(originalPrice.toFixed(2)),
+            finalPrice: roundedFinalPrice,
+            discountAmount: parseFloat(discountAmount.toFixed(2)),
             grantType: 'partial'
         },
 
@@ -958,7 +983,7 @@ async function processPartialDiscountCheckout(data: any) {
             affiliateEmail: affiliate.email,
             commissionEligible: true,
             commissionRate: affiliate.commissionRate || 10,
-            commissionAmount: calculateCommission(finalPrice, affiliate.commissionRate || 10),
+            commissionAmount: parseFloat(calculateCommission(roundedFinalPrice, affiliate.commissionRate || 10).toFixed(2)),
             referralSource: 'affiliate_link',
             referralTimestamp: new Date(),
             commissionProcessed: false,
@@ -966,8 +991,8 @@ async function processPartialDiscountCheckout(data: any) {
         } : undefined,
 
         // Store both amounts for tracking
-        originalAmount: originalPrice,
-        commissionBaseAmount: finalPrice, // Commission on amount user pays, not original price
+        originalAmount: parseFloat(originalPrice.toFixed(2)),
+        commissionBaseAmount: roundedFinalPrice, // Commission on amount user pays, not original price
 
         // Set referral tracking
         referralSource: affiliate ? 'affiliate_link' : 'direct',
@@ -987,7 +1012,7 @@ async function processPartialDiscountCheckout(data: any) {
 
     const savedEnrollment = await enrollment.save();
 
-    // 3. Create Stripe checkout session with discounted price (with rollback on failure)
+    // 5. Create Stripe checkout session with discounted price (with rollback on failure)
     try {
         const session = await stripe.checkout.sessions.create({
             payment_method_types: ['card'],
@@ -996,10 +1021,10 @@ async function processPartialDiscountCheckout(data: any) {
                     currency: 'usd',
                     product_data: {
                         name: `${course.title} (${discountPercentage}% Grant Discount Applied)`,
-                        description: `Original Price: $${originalPrice} | Discount: ${discountPercentage}% ($${discountAmount}) | Final Price: $${finalPrice}`,
+                        description: `Original Price: $${originalPrice.toFixed(2)} | Discount: ${discountPercentage}% ($${discountAmount.toFixed(2)}) | Final Price: $${roundedFinalPrice.toFixed(2)}`,
                         images: course.image ? [course.image] : undefined,
                     },
-                    unit_amount: Math.round(finalPrice * 100), // Convert to cents
+                    unit_amount: stripeAmount, // Already in cents and properly rounded
                 },
                 quantity: 1,
             }],
@@ -1015,13 +1040,13 @@ async function processPartialDiscountCheckout(data: any) {
                 redirectSource: data.redirectSource,
                 grantId: String(reservedGrant._id),
                 discountPercentage: discountPercentage.toString(),
-                originalPrice: originalPrice.toString(),
-                finalPrice: finalPrice.toString(),
+                originalPrice: originalPrice.toFixed(2),
+                finalPrice: roundedFinalPrice.toFixed(2),
                 enrollmentType: 'partial_grant'
             }
         });
 
-        // 4. Update enrollment with Stripe session ID
+        // 6. Update enrollment with Stripe session ID
         await Enrollment.findByIdAndUpdate(savedEnrollment._id, {
             stripeSessionId: session.id,
             paymentId: `STRIPE_PARTIAL_${session.id}`
@@ -1029,9 +1054,10 @@ async function processPartialDiscountCheckout(data: any) {
 
         ProductionLogger.info('Partial discount Stripe session created', {
             sessionId: session.id,
-            originalPrice,
-            finalPrice,
-            discountPercentage
+            originalPrice: originalPrice.toFixed(2),
+            finalPrice: roundedFinalPrice.toFixed(2),
+            discountPercentage,
+            stripeAmount
         });
 
         return NextResponse.json({
