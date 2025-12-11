@@ -978,6 +978,7 @@ async function processPartialDiscountCheckout(data: any) {
     let reservedGrant;
     try {
         // Check if reservation has expired (reservationExpiry < now) or doesn't exist
+        // OR if the same user (email) is trying again - let them retry
         const now = new Date();
         reservedGrant = await Grant.findOneAndUpdate(
             {
@@ -987,7 +988,8 @@ async function processPartialDiscountCheckout(data: any) {
                 email: email.toLowerCase(),
                 $or: [
                     { reservationExpiry: { $exists: false } }, // Never reserved
-                    { reservationExpiry: { $lt: now } } // Reservation expired (expiry time is in the past)
+                    { reservationExpiry: { $lt: now } }, // Reservation expired (expiry time is in the past)
+                    { reservedBy: email.toLowerCase() } // Same user trying again - allow retry
                 ]
             },
             {
