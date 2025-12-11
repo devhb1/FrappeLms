@@ -958,7 +958,7 @@ async function processPartialDiscountCheckout(data: any) {
             affiliateEmail: affiliate.email,
             commissionEligible: true,
             commissionRate: affiliate.commissionRate || 10,
-            commissionAmount: Math.round((finalPrice * (affiliate.commissionRate || 10)) / 100 * 100) / 100,
+            commissionAmount: calculateCommission(finalPrice, affiliate.commissionRate || 10),
             referralSource: 'affiliate_link',
             referralTimestamp: new Date(),
             commissionProcessed: false,
