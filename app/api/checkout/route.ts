@@ -980,7 +980,7 @@ async function processPartialDiscountCheckout(data: any) {
         // Check if reservation has expired (reservationExpiry < now) or doesn't exist
         // OR if the same user (email) is trying again - let them retry
         const now = new Date();
-        
+
         // First, let's see the current state of this grant
         const currentGrantState = await Grant.findById(grant._id);
         ProductionLogger.info('Current grant state before reservation attempt', {
@@ -992,14 +992,14 @@ async function processPartialDiscountCheckout(data: any) {
                 reservedAt: currentGrantState.reservedAt,
                 reservedBy: currentGrantState.reservedBy,
                 reservationExpiry: currentGrantState.reservationExpiry,
-                isReservationExpired: currentGrantState.reservationExpiry 
+                isReservationExpired: currentGrantState.reservationExpiry
                     ? new Date() > new Date(currentGrantState.reservationExpiry)
                     : null
             } : 'GRANT_NOT_FOUND',
             attemptingEmail: email.toLowerCase(),
             currentTime: now
         });
-        
+
         reservedGrant = await Grant.findOneAndUpdate(
             {
                 _id: grant._id,
