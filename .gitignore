@@ -48,9 +48,18 @@ next-env.d.ts
 **/archive/
 **/_archive/
 **/backup/
+
+# Migration and utility scripts (development only)
+scripts/migrate-*.js
+scripts/migrate-*.ts
+scripts/verify-*.js
+scripts/test-*.js
 **/old/
 
 # Logs and temporary files
 *.log
 .temp/
 .tmp/
+# Package manager locks (keep pnpm-lock.yaml)
+yarn.lock
+package-lock.json
