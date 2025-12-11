@@ -154,6 +154,35 @@ export default function CourseDetailPage() {
         }
     }, [searchParams, lmsRedirectData.frappe_email, lmsRedirectData.frappe_username, lmsRedirectData.affiliate_email, username, lmsEmail, email, affiliateId]);
 
+    // Auto-detect and prevent self-referral (clear affiliate field if it matches user's email)
+    useEffect(() => {
+        const primaryEmail = (email.trim() || lmsEmail.trim()).toLowerCase();
+        const affiliateEmailValue = affiliateId.trim().toLowerCase();
+
+        if (primaryEmail && affiliateEmailValue &&
+            affiliateEmailValue.includes('@') &&
+            primaryEmail === affiliateEmailValue) {
+
+            // Self-referral detected - clear affiliate field and show warning
+            setAffiliateId('');
+            setValidationState({
+                hasSelfReferral: true,
+                validationMessage: 'Affiliate field cleared - you cannot refer yourself'
+            });
+
+            toast({
+                title: "Affiliate Field Cleared",
+                description: "You cannot use your own email as a referral. The affiliate field has been cleared so you can proceed with enrollment.",
+                variant: "default"
+            });
+        } else {
+            setValidationState({
+                hasSelfReferral: false,
+                validationMessage: ''
+            });
+        }
+    }, [email, lmsEmail, affiliateId, toast]);
+
     // Add validation state for self-referral
     const [validationState, setValidationState] = useState({
         hasSelfReferral: false,
