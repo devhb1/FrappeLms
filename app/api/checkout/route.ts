@@ -689,7 +689,7 @@ async function processCouponEnrollment(data: any) {
 
 // ===== PAID ENROLLMENT PROCESSING =====
 async function processStripeCheckout(data: any) {
-    const { courseId, email, course, affiliate } = data;
+    const { courseId, email, course, affiliate, redirectSource } = data;
 
     // 1. Create pending enrollment record
     const enrollment = new Enrollment({
@@ -702,9 +702,9 @@ async function processStripeCheckout(data: any) {
 
         // LMS integration data
         lmsContext: {
-            frappeUsername: data.username || email.split('@')[0],
+            frappeUsername: email.split('@')[0],
             frappeEmail: email,
-            redirectSource: affiliate ? 'affiliate' : data.redirectSource || 'direct'
+            redirectSource: redirectSource || (affiliate ? 'affiliate' : 'direct')
         },
 
         // Affiliate data (if applicable)
@@ -769,7 +769,7 @@ async function processStripeCheckout(data: any) {
             email: email,
             enrollmentId: savedEnrollment._id.toString(),
             affiliateEmail: affiliate?.email || '',
-            redirectSource: data.redirectSource
+            redirectSource: redirectSource || 'direct'
         }
     });
 
