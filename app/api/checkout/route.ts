@@ -1140,7 +1140,7 @@ async function processPartialDiscountCheckout(data: any) {
             originalPrice: parseFloat(originalPrice.toFixed(2)),
             finalPrice: roundedFinalPrice,
             discountAmount: parseFloat(discountAmount.toFixed(2)),
-            grantType: 'partial'
+            grantType: 'partial_grant'
         },
 
         // Affiliate data (if applicable) - commission on amount user actually pays
@@ -1241,7 +1241,7 @@ async function processPartialDiscountCheckout(data: any) {
             },
             grant: {
                 couponCode: reservedGrant.couponCode,
-                grantType: 'partial'
+                grantType: 'partial_grant'
             }
         });
 
