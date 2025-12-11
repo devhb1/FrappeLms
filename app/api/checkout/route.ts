@@ -977,6 +977,8 @@ async function processPartialDiscountCheckout(data: any) {
 
     let reservedGrant;
     try {
+        // Check if reservation has expired (reservationExpiry < now) or doesn't exist
+        const now = new Date();
         reservedGrant = await Grant.findOneAndUpdate(
             {
                 _id: grant._id,
@@ -984,24 +986,33 @@ async function processPartialDiscountCheckout(data: any) {
                 couponUsed: false,
                 email: email.toLowerCase(),
                 $or: [
-                    { reservedAt: { $exists: false } }, // Not reserved yet
-                    { reservedAt: { $lt: new Date(Date.now() - 30 * 60 * 1000) } } // Reserved > 30 min ago (expired)
+                    { reservationExpiry: { $exists: false } }, // Never reserved
+                    { reservationExpiry: { $lt: now } } // Reservation expired (expiry time is in the past)
                 ]
             },
             {
                 $set: {
-                    reservedAt: new Date(),
+                    reservedAt: now,
                     reservedBy: email.toLowerCase(),
-                    reservationExpiry: new Date(Date.now() + 30 * 60 * 1000) // 30 minutes from now
+                    reservationExpiry: new Date(now.getTime() + 30 * 60 * 1000) // 30 minutes from now
                 }
             },
             { new: true }
         );
 
         if (!reservedGrant) {
+            // Fetch the grant to see its current state
+            const currentGrant = await Grant.findById(grant._id);
             ProductionLogger.warn('Partial grant coupon already reserved or used', {
                 grantId: grant._id,
                 email,
+                currentState: currentGrant ? {
+                    couponUsed: currentGrant.couponUsed,
+                    reservedAt: currentGrant.reservedAt,
+                    reservedBy: currentGrant.reservedBy,
+                    reservationExpiry: currentGrant.reservationExpiry,
+                    isExpired: currentGrant.reservationExpiry ? new Date() > new Date(currentGrant.reservationExpiry) : null
+                } : 'GRANT_NOT_FOUND',
                 queryConditions: {
                     _id: grant._id,
                     status: 'approved',
@@ -1012,7 +1023,10 @@ async function processPartialDiscountCheckout(data: any) {
             return NextResponse.json({
                 error: 'This coupon is currently being used or has been used already',
                 code: 'COUPON_RESERVED',
-                retryable: true // User can retry after reservation expires
+                retryable: true, // User can retry after reservation expires
+                details: currentGrant?.reservationExpiry
+                    ? `Reservation expires at ${new Date(currentGrant.reservationExpiry).toISOString()}`
+                    : 'Coupon may have been used'
             }, { status: 400 });
         }
 
