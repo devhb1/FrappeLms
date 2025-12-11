@@ -25,11 +25,31 @@ export default function RegisterPage() {
     const router = useRouter();
 
     const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const { name, value } = e.target;
+
         setFormData({
             ...formData,
-            [e.target.name]: e.target.value
+            [name]: value
         });
-        setMessage({ type: '', text: '' }); // Clear message on input change
+
+        // Real-time validation for username
+        if (name === 'username' && value.length > 0) {
+            if (!/^[a-zA-Z0-9_-]+$/.test(value)) {
+                setMessage({
+                    type: 'error',
+                    text: 'Username can only contain letters, numbers, underscores (_), and hyphens (-)'
+                });
+            } else if (value.length < 3) {
+                setMessage({
+                    type: 'error',
+                    text: 'Username must be at least 3 characters'
+                });
+            } else {
+                setMessage({ type: '', text: '' }); // Clear error if valid
+            }
+        } else if (name !== 'username') {
+            setMessage({ type: '', text: '' }); // Clear message on other input changes
+        }
     };
 
     const validateForm = () => {
@@ -39,6 +59,15 @@ export default function RegisterPage() {
         }
         if (formData.username.length < 3) {
             setMessage({ type: 'error', text: 'Username must be at least 3 characters' });
+            return false;
+        }
+        // Validate username format - only letters, numbers, underscores, hyphens
+        if (!/^[a-zA-Z0-9_-]+$/.test(formData.username)) {
+            setMessage({ type: 'error', text: 'Username can only contain letters, numbers, underscores (_), and hyphens (-). No spaces or special characters like @ or .' });
+            return false;
+        }
+        if (formData.username.length > 30) {
+            setMessage({ type: 'error', text: 'Username cannot exceed 30 characters' });
             return false;
         }
         if (!formData.email.trim()) {
@@ -98,10 +127,24 @@ export default function RegisterPage() {
                     router.push(`/verify-email?email=${encodeURIComponent(formData.email)}`);
                 }, 2000);
             } else {
-                setMessage({ type: 'error', text: data.error || 'Registration failed' });
+                // Display detailed error message from backend
+                let errorMessage = data.error || 'Registration failed';
+
+                // If there are validation details, show them
+                if (data.details && Array.isArray(data.details)) {
+                    errorMessage = data.details.join('. ');
+                } else if (data.message) {
+                    errorMessage = data.message;
+                }
+
+                // Provide helpful hints for common errors
+                if (errorMessage.includes('Username') && errorMessage.includes('letters, numbers')) {
+                    errorMessage += ' (Hint: Use only letters, numbers, _ and -)';
+                }
+
+                setMessage({ type: 'error', text: errorMessage });
             }
         } catch (error) {
-            console.error('Registration error:', error);
             setMessage({ type: 'error', text: 'Network error. Please try again.' });
         } finally {
             setIsLoading(false);
@@ -131,7 +174,7 @@ export default function RegisterPage() {
                                     id="username"
                                     name="username"
                                     type="text"
-                                    placeholder="Enter your username"
+                                    placeholder="e.g., john_doe123"
                                     value={formData.username}
                                     onChange={handleInputChange}
                                     className="pl-10"
@@ -139,6 +182,9 @@ export default function RegisterPage() {
                                     required
                                 />
                             </div>
+                            <p className="text-xs text-gray-500 mt-1">
+                                Only letters, numbers, underscores (_), and hyphens (-). No @ or special characters.
+                            </p>
                         </div>
 
                         {/* Email Field */}

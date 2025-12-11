@@ -32,9 +32,7 @@ class SimpleEmailService {
             await this.transporter.verify();
             console.log('✅ Email service ready');
         } catch (error) {
-            console.error('❌ SMTP CONNECTION FAILED:', error);
-            console.error('⚠️ Please check your SMTP credentials in .env.local');
-            console.error('⚠️ Emails will fail but application will continue');
+            console.error('❌ SMTP connection failed:', (error as any)?.message || error);
             // Don't throw - let app continue even if email fails
         }
     }
@@ -62,14 +60,7 @@ class SimpleEmailService {
             console.log(`✅ Email sent: ${templateName} to ${to}`);
             return true;
         } catch (error) {
-            console.error(`❌ Email failed: ${templateName} to ${to}`, error);
-
-            // Log specific error guidance
-            const errMsg = (error as any)?.response || (error as any)?.message || '';
-            if ((errMsg as string).includes('Maximum credits exceeded')) {
-                console.error('❌ SENDGRID QUOTA EXCEEDED - Check your SendGrid account at https://app.sendgrid.com/');
-            }
-
+            console.error(`❌ Email failed (${templateName}):`, (error as any)?.message || error);
             throw error;
         }
     }
@@ -269,10 +260,9 @@ class SimpleEmailService {
                     </div>
                 `,
             });
-            console.log(`✅ Test email sent to ${email}`);
             return true;
         } catch (error) {
-            console.error(`❌ Test email failed:`, error);
+            console.error(`❌ Test email failed:`, (error as any)?.message || error);
             return false;
         }
     }

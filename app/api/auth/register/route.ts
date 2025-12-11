@@ -26,8 +26,6 @@ async function safeEmailSend(emailPromise: Promise<boolean>, context: string): P
 export async function POST(request: NextRequest) {
     try {
         const body = await request.json();
-        console.log('📝 Registration attempt:', { email: body.email, hasPassword: !!body.password, hasUsername: !!body.username });
-
         const { email, password, username } = body;
 
         if (!email || !password) {
@@ -98,18 +96,10 @@ export async function POST(request: NextRequest) {
 
         // Send only OTP verification email during registration
         // Welcome email will be sent after verification
-        console.log('📧 Sending OTP email to:', email);
         const otpSuccess = await safeEmailSend(
             sendEmail.otp(email.toLowerCase(), finalUsername, verifyCode),
             'user registration - OTP verification'
         );
-
-        console.log('✅ User registered successfully:', {
-            userId: user._id,
-            email: email.toLowerCase(),
-            username: finalUsername,
-            emailSent: otpSuccess
-        });
 
         return NextResponse.json({
             message: "User registered successfully. Please check your email for verification code.",
