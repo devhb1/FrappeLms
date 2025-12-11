@@ -59,6 +59,8 @@ export interface IGrant extends Document {
     couponUsedAt?: Date;                        // Timestamp of coupon usage
     couponUsedBy?: string;                      // Email of user who redeemed (verification)
     reservedAt?: Date;                          // Timestamp when coupon was atomically reserved (prevents race conditions)
+    reservedBy?: string;                        // Email of user who reserved the coupon (for partial grants)
+    reservationExpiry?: Date;                   // When the reservation expires (30 minutes)
     enrollmentId?: mongoose.Types.ObjectId;     // Link to enrollment record
 
     // ===== DISCOUNT CONTROL SYSTEM (v2.1) =====
@@ -170,15 +172,9 @@ const grantSchema: Schema<IGrant> = new mongoose.Schema({
     },
     couponUsedAt: Date,
     couponUsedBy: String,
-    reservedAt: {
-        type: Date,
-        validate: {
-            validator: function (value: Date) {
-                return !value || this.couponUsed;
-            },
-            message: 'reservedAt can only be set when coupon is used'
-        }
-    },
+    reservedAt: Date,
+    reservedBy: String,
+    reservationExpiry: Date,
     enrollmentId: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'Enrollment'
